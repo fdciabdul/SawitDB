@@ -1,4 +1,5 @@
 # SawitDB - Git Ignore
+.gitignore
 
 # Database Files
 *.sawit
@@ -12,6 +13,9 @@ test_*.sawit
 example.sawit
 plantation.sawit
 *_test.sawit
+benchmark.js
+verify_*.js
+test_output.txt
 
 # Node.js
 node_modules/

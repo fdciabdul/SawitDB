@@ -52,187 +52,169 @@ Ensure you have Node.js installed. Clone the repository.
 git clone https://github.com/WowoEngine/SawitDB.git
 ```
 
-## Quick Start (Network Edition)
+## Quick Start (Network Edition v2.2)
 
 ### 1. Start the Server
 ```bash
-node bin/sawit-server.js
+node src/SawitServer.js
 ```
 The server will start on `0.0.0.0:7878` by default.
 
-**Environment Variables:**
-```bash
-SAWIT_PORT=7878           # Port to listen on
-SAWIT_HOST=0.0.0.0        # Host to bind to
-SAWIT_DATA_DIR=./data     # Directory for .sawit files
-SAWIT_AUTH=user:pass      # Enable authentication (optional)
-```
-
 ### 2. Connect with Client
+Use [SawitClient](#client-api) or any interactive session.
 
-**Option A: Interactive CLI**
-```bash
-node cli/remote.js sawitdb://localhost:7878/mydb
-```
+---
 
-**Option B: Programmatic Usage**
-See [Client API](#client-api) section.
+## Dual Syntax Support (New in v2.2)
 
-## Usage (Embedded/Local)
+SawitDB 2.2 introduces the **Generic Syntax** alongside the classic **Agricultural Query Language (AQL)**, making it easier for developers familiar with standard SQL to adopt.
 
-### Initialization
+| Operation | Agricultural Query Language (AQL) | Generic SQL (Standard) |
+| :--- | :--- | :--- |
+| **Create DB** | `BUKA WILAYAH sales_db` | `CREATE DATABASE sales_db` |
+| **Use DB** | `MASUK WILAYAH sales_db` | `USE sales_db` |
+| **Show DBs** | `LIHAT WILAYAH` | `SHOW DATABASES` |
+| **Drop DB** | `BAKAR WILAYAH sales_db` | `DROP DATABASE sales_db` |
+| **Create Table** | `LAHAN products` | `CREATE TABLE products` |
+| **Insert** | `TANAM KE products (...) BIBIT (...)` | `INSERT INTO products (...) VALUES (...)` |
+| **Select** | `PANEN * DARI products DIMANA ...` | `SELECT * FROM products WHERE ...` |
+| **Update** | `PUPUK products DENGAN ...` | `UPDATE products SET ...` |
+| **Delete** | `GUSUR DARI products DIMANA ...` | `DELETE FROM products WHERE ...` |
+| **Indexing** | `INDEKS products PADA price` | `CREATE INDEX ON products (price)` |
+| **Aggregation** | `HITUNG SUM(stock) DARI products` | *Same Syntax* |
 
-```javascript
-const SawitDB = require('./src/WowoEngine');
-const path = require('path');
+---
 
-// Initialize the engine. File created automatically.
-const db = new SawitDB(path.join(__dirname, 'plantation.sawit'));
-```
-
-### Executing Queries
-
-Use the `.query()` method to execute strings written in Agricultural Query Language.
-
-```javascript
-// Create a new Table
-const result = db.query("LAHAN oil_palm_a");
-console.log(result); 
-```
-
-## Query Syntax (AQL)
-
-SawitDB uses a strict syntax mapping standard database operations to farming metaphors.
+## Query Syntax (Detailed)
 
 ### 1. Management Commands
 
-#### Create Table (`LAHAN`)
-Opens a new land (table) for planting.
+#### Create Table
 ```sql
-LAHAN [table_name]
+-- Tani
+LAHAN users
+-- Generic
+CREATE TABLE users
 ```
-*Example:* `LAHAN sawit_blok_a`
 
-#### Show Tables (`LIHAT`)
-Surveys the land to see all opened tables.
+#### Show Tables
 ```sql
+-- Tani
 LIHAT LAHAN
+-- Generic
+SHOW TABLES
 ```
 
-#### Drop Table (`BAKAR`)
-Burns the land (deletes the table and all data). **Warning: Irreversible.**
+#### Drop Table
 ```sql
-BAKAR LAHAN [table_name]
+-- Tani
+BAKAR LAHAN users
+-- Generic
+DROP TABLE users
 ```
-*Example:* `BAKAR LAHAN sawit_blok_a`
 
 ### 2. Data Manipulation
 
-#### Insert Data (`TANAM`)
-Plants seeds (inserts records) into the land.
+#### Insert Data
 ```sql
-TANAM KE [table_name] (col1, col2, ...) BIBIT (val1, val2, ...)
+-- Tani
+TANAM KE users (name, role) BIBIT ('Alice', 'Admin')
+-- Generic
+INSERT INTO users (name, role) VALUES ('Alice', 'Admin')
 ```
-*Example:* `TANAM KE sawit (id, bibit, umur) BIBIT (1, 'Tenera', 5)`
 
-#### Select Data (`PANEN`)
-Harvests (selects) data from the land.
-- **Operators supported**: `=`, `!=`, `>`, `<`, `>=`, `<=`
-- **Wildcard**: Use `*` to select all columns.
-- **Conditions**: Support `AND` / `OR`.
-
+#### Select Data
 ```sql
-PANEN * DARI [table_name]
-PANEN [col1, col2] DARI [table_name]
-PANEN * DARI [table_name] DIMANA [key] [op] [value]
+-- Tani
+PANEN name, role DARI users DIMANA role = 'Admin' ORDER BY name ASC LIMIT 10
+-- Generic
+SELECT name, role FROM users WHERE role = 'Admin' ORDER BY name ASC LIMIT 10
 ```
-*Example:* `PANEN * DARI sawit DIMANA umur > 3 AND jenis = 'Tenera'`
+*Operators*: `=`, `!=`, `>`, `<`, `>=`, `<=`
+*Advanced*: `IN ('a','b')`, `LIKE 'pat%'`, `BETWEEN 10 AND 20`, `IS NULL`, `IS NOT NULL`
 
-#### Update Data (`PUPUK`)
-Fertilizes (updates) existing crops.
+#### Pagination & Sorting (New in v2.3)
 ```sql
-PUPUK [table_name] DENGAN [key]=[val], ... DIMANA [key] [op] [val]
+SELECT * FROM users ORDER BY age DESC LIMIT 5 OFFSET 10
+SELECT * FROM users WHERE age BETWEEN 18 AND 30 AND status IS NOT NULL
 ```
-*Example:* `PUPUK sawit DENGAN status='Panen Raya', yield=100 DIMANA umur >= 10`
 
-#### Delete Data (`GUSUR`)
-Evicts (deletes) crops from the land.
+#### Update Data
 ```sql
-GUSUR DARI [table_name] DIMANA [key] [op] [val]
+-- Tani
+PUPUK users DENGAN role='SuperAdmin' DIMANA name='Alice'
+-- Generic
+UPDATE users SET role='SuperAdmin' WHERE name='Alice'
 ```
-*Example:* `GUSUR DARI sawit DIMANA id = 99`
 
-### 3. Advanced Features (v2.0)
+#### Delete Data
+```sql
+-- Tani
+GUSUR DARI users DIMANA name='Bob'
+-- Generic
+DELETE FROM users WHERE name='Bob'
+```
 
-#### Indexing (`INDEKS`)
-Create B-Tree indexes for faster lookups (O(log n)).
+### 3. Advanced Features
+
+#### Indexing
 ```sql
 INDEKS [table] PADA [field]
-LIHAT INDEKS [table]
+-- or
+CREATE INDEX ON [table] ([field])
 ```
 
-#### Aggregation (`HITUNG`)
-Calculate statistics on your harvest.
+#### Aggregation & Grouping
 ```sql
 HITUNG COUNT(*) DARI [table]
-HITUNG SUM(field) DARI [table]
-HITUNG AVG(field) DARI [table] KELOMPOK [group_field]
-```
-
-## Client API
-
-```javascript
-const SawitClient = require('./src/SawitClient');
-
-// Connection String: sawitdb://[user:pass@]host:port/database
-const client = new SawitClient('sawitdb://localhost:7878/plantation');
-
-await client.connect();
-
-// Execute queries
-const result = await client.query('PANEN * DARI sawit');
-
-// Switch database
-await client.use('new_db');
-
-client.disconnect();
-```
-
-## CLI Tool
-
-### Local
-```bash
-node cli/local.js
-```
-
-### Remote
-```bash
-node cli/remote.js sawitdb://localhost:7878/plantation
+HITUNG AVG(price) DARI [products] KELOMPOK [category]
+-- Generic Keyword Alias
+SELECT AVG(price) FROM [products] GROUP BY [category] (Coming Soon)
 ```
 
 ## Architecture Details
 
-- **Page 0 (Master Page)**:  Contains the file header (Magic bytes `WOWO`) and the Table Directory.
-- **Table Directory**: Maps table names to their `Start Page ID` and `Last Page ID`.
-- **Data Pages**: Each table is stored as a linked list of pages. Each page contains a header pointing to the next page, allowing the database to grow dynamically.
-- **B-Tree Indexing**: Auxiliary structures for fast data retrieval.
+- **Modular Codebase (v2.2)**: Engine logic separated into `src/modules/` (`Pager.js`, `QueryParser.js`, `BTreeIndex.js`) for better maintainability.
+- **Page 0 (Master Page)**: Contains header and Table Directory.
+- **Data & Indexes**: Stored in 4KB atomic pages.
 
-## Performance
+## 📊 Benchmark Performance (v2.3)
+Test Environment: Single Thread, Windows Node.js (Local NVMe)
 
-Benchmark results on standard hardware (5000 records):
+| Operation | Ops/Sec | Latency (avg) |
+|-----------|---------|---------------|
+| **INSERT** | ~3,125 | 0.32 ms |
+| **SELECT (PK Index)** | ~3,846 | 0.26 ms |
+| **SELECT (Scan)** | ~4,762 | 0.21 ms |
+| **UPDATE** | ~3,571 | 0.28 ms |
 
-| Operation | Speed | Time (Total) | Example |
-|-----------|-------|:------------:|---------|
-| **Insert (TANAM)** | ~34,194 ops/sec | 0.15s | 5000 inserts |
-| **Select All (PANEN)** | ~7,450,454 ops/sec | 0.001s | Scan 5000 records |
-| **Select Where** | < 0.001s / query | - | Full Scan |
-| **Select w/ Index** | < 0.001s / query | - | Indexed Lookup |
-| **Update (PUPUK)** | ~69,590 ops/sec | 0.014s | 1000 updates |
-| **Delete (GUSUR)** | ~35,777 ops/sec | 0.028s | 1000 deletes |
+*Note: Hasil dapat bervariasi tergantung hardware.*
 
-*Note: Update and Delete are slower because they currently require a full linear scan of the table pages and a "Delete+Insert" strategy for updates to handle variable-length records safely.*
+## 📜 Full Feature Comparison (v2.3)
 
-*Data Size: 188KB for 5000 records.*
+| Feature | Tani Edition (AQL) | Generic SQL (Standard) |
+|---------|-------------------|------------------------|
+| **Create DB** | `BUKA WILAYAH [db]` | `CREATE DATABASE [db]` |
+| **Use DB** | `MASUK WILAYAH [db]` | `USE [db]` |
+| **Show DBs** | `LIHAT WILAYAH` | `SHOW DATABASES` |
+| **Drop DB** | `BAKAR WILAYAH [db]` | `DROP DATABASE [db]` |
+| **Create Table** | `LAHAN [table]` | `CREATE TABLE [table]` |
+| **Insert** | `TANAM KE [table] ... BIBIT (...)` | `INSERT INTO [table] (...) VALUES (...)` |
+| **Select** | `PANEN ... DARI [table] DIMANA ...` | `SELECT ... FROM [table] WHERE ...` |
+| **Update** | `PUPUK [table] DENGAN ... DIMANA ...` | `UPDATE [table] SET ... WHERE ...` |
+| **Delete** | `GUSUR DARI [table] DIMANA ...` | `DELETE FROM [table] WHERE ...` |
+| **Index** | `INDEKS [table] PADA [field]` | `CREATE INDEX ON [table] (field)` |
+| **Count** | `HITUNG COUNT(*) DARI [table]` | `SELECT COUNT(*) FROM [table]` (via HITUNG) |
+
+### Supported Operators
+*   **Comparison**: `=`, `!=`, `>`, `<`, `>=`, `<=`
+*   **Logical**: `AND`, `OR`
+*   **Create**: `IN ('a','b')`, `NOT IN (...)`
+*   **Pattern**: `LIKE 'value%'`
+*   **Range**: `BETWEEN min AND max`
+*   **Null Check**: `IS NULL`, `IS NOT NULL`
+*   **Pagination**: `LIMIT n`, `OFFSET m`
+*   **Sorting**: `ORDER BY field [ASC|DESC]`
 
 <!-- ## Support Developer
 - [![Saweria](https://img.shields.io/badge/Saweria-Support%20Me-orange?style=flat&logo=ko-fi)](https://saweria.co/patradev)

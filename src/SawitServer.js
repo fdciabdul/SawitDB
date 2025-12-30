@@ -65,11 +65,11 @@ class SawitServer {
 
         this.server.listen(this.port, this.host, () => {
             console.log(`╔══════════════════════════════════════════════════╗`);
-            console.log(`║   🌴 SawitDB Server - Tani Edition v2.0        ║`);
+            console.log(`║         🌴 SawitDB Server - Version 2.3          ║`);
             console.log(`╚══════════════════════════════════════════════════╝`);
             console.log(`[Server] Listening on ${this.host}:${this.port}`);
             console.log(`[Server] Protocol: sawitdb://${this.host}:${this.port}/[database]`);
-            console.log(`[Server] Ready to accept petani connections...`);
+            console.log(`[Server] Ready to accept connections...`);
         });
 
         this.server.on('error', (err) => {
@@ -180,8 +180,8 @@ class SawitServer {
         // Send welcome message
         this._sendResponse(socket, {
             type: 'welcome',
-            message: 'SawitDB Server - Tani Edition',
-            version: '2.0',
+            message: 'SawitDB Server',
+            version: '2.3',
             protocol: 'sawitdb'
         });
     }
@@ -301,8 +301,181 @@ class SawitServer {
         const { query } = payload;
         const startTime = Date.now();
 
+        // --- Intercept Server-Level Commands (Wilayah Management) ---
+
+        const qUpper = query.trim().toUpperCase();
+
+        // 1. LIHAT WILAYAH
+        if (qUpper === 'LIHAT WILAYAH') {
+            try {
+                const databases = fs.readdirSync(this.dataDir)
+                    .filter(file => file.endsWith('.sawit'));
+
+                // Format nicely as a table-like string or JSON
+                const list = databases.map(f => `- ${f.replace('.sawit', '')}`).join('\n');
+                const result = `Daftar Wilayah:\n${list}`;
+
+                return this._sendResponse(socket, {
+                    type: 'query_result',
+                    result,
+                    query,
+                    executionTime: Date.now() - startTime
+                });
+            } catch (err) {
+                return this._sendError(socket, `Gagal melihat wilayah: ${err.message}`);
+            }
+        }
+
+        // 2. BUKA WILAYAH [nama]
+        if (qUpper.startsWith('BUKA WILAYAH')) {
+            const parts = query.trim().split(/\s+/);
+            if (parts.length < 3) {
+                return this._sendError(socket, 'Syntax: BUKA WILAYAH [nama_wilayah]');
+            }
+            const dbName = parts[2];
+            // Reuse logic from internal handler if possible, otherwise implement here
+            // Implementing directly to match the "create empty sawit file" logic
+            try {
+                // Validation
+                if (!/^[a-zA-Z0-9_-]+$/.test(dbName)) {
+                    return this._sendError(socket, 'Nama wilayah hanya boleh huruf, angka, _ dan -');
+                }
+
+                const dbPath = path.join(this.dataDir, `${dbName}.sawit`);
+                if (fs.existsSync(dbPath)) {
+                    // It's technically fine if it exists, just say it's opened/available
+                    // But strict "Create" usually expects new. Let's follow "Open/Create" semantics of key-value stores or similar
+                    // Design doc says: "Membuat file ... kosong".
+                    // If exists, let's just say it exists.
+                    return this._sendResponse(socket, {
+                        type: 'query_result',
+                        result: `Wilayah '${dbName}' sudah ada.`,
+                        query,
+                        executionTime: Date.now() - startTime
+                    });
+                }
+
+                // Create empty file (via SawitDB constructor which initializes it)
+                new SawitDB(dbPath);
+
+                return this._sendResponse(socket, {
+                    type: 'query_result',
+                    result: `Wilayah '${dbName}' berhasil dibuka.`,
+                    query,
+                    executionTime: Date.now() - startTime
+                });
+            } catch (err) {
+                return this._sendError(socket, `Gagal membuka wilayah: ${err.message}`);
+            }
+        }
+
+        // 3. MASUK WILAYAH [nama]
+        if (qUpper.startsWith('MASUK WILAYAH')) {
+            const parts = query.trim().split(/\s+/);
+            if (parts.length < 3) {
+                return this._sendError(socket, 'Syntax: MASUK WILAYAH [nama_wilayah]');
+            }
+            const dbName = parts[2];
+
+            // Allow "MASUK WILAYAH DEFAULT" case-insensitive match for file? No, usually case sensitive filesystems.
+            // But let's assume case-sensitive for ID. 
+
+            const dbPath = path.join(this.dataDir, `${dbName}.sawit`);
+            if (!fs.existsSync(dbPath)) {
+                return this._sendError(socket, `Wilayah '${dbName}' tidak ditemukan.`);
+            }
+
+            context.setDatabase(dbName);
+            return this._sendResponse(socket, {
+                type: 'query_result', // Return as query result so CLI prints it normally
+                result: `Selamat datang di wilayah '${dbName}'.`,
+                query,
+                executionTime: Date.now() - startTime
+            });
+        }
+
+        // 4. BAKAR WILAYAH [nama]
+        if (qUpper.startsWith('BAKAR WILAYAH')) {
+            const parts = query.trim().split(/\s+/);
+            if (parts.length < 3) {
+                return this._sendError(socket, 'Syntax: BAKAR WILAYAH [nama_wilayah]');
+            }
+            const dbName = parts[2];
+
+            // Reuse existing logic
+            const payload = { database: dbName };
+            // We need to adapt the existing _handleDropDatabase to generic usage or call it.
+            // _handleDropDatabase sends its own response. We want query_result format preferably for consistency in CLI?
+            // The existing _handleDropDatabase sends 'drop_success'. CLI might not print that as a query result string.
+            // Let's reimplement logic here for 'query' flow to ensure 'query_result' type.
+
+            try {
+                const dbPath = path.join(this.dataDir, `${dbName}.sawit`);
+                if (!fs.existsSync(dbPath)) {
+                    return this._sendError(socket, `Wilayah '${dbName}' tidak ditemukan.`);
+                }
+
+                if (this.databases.has(dbName)) {
+                    this.databases.delete(dbName);
+                }
+
+                try { fs.unlinkSync(dbPath); } catch (e) { }
+
+                if (context.currentDatabase === dbName) {
+                    context.setDatabase(null);
+                }
+
+                return this._sendResponse(socket, {
+                    type: 'query_result',
+                    result: `Wilayah '${dbName}' telah hangus terbakar.`,
+                    query,
+                    executionTime: Date.now() - startTime
+                });
+
+            } catch (err) {
+                return this._sendError(socket, `Gagal membakar wilayah: ${err.message}`);
+            }
+        }
+
+        // --- Generic Syntax Aliases (Server Level) ---
+
+        // 5. CREATE DATABASE [name] -> BUKA WILAYAH
+        if (qUpper.startsWith('CREATE DATABASE')) {
+            const parts = query.trim().split(/\s+/);
+            if (parts.length < 3) return this._sendError(socket, 'Syntax: CREATE DATABASE [name]');
+            // Recruit BUKA WILAYAH logic
+            const newQuery = `BUKA WILAYAH ${parts[2]}`;
+            return this._handleQuery(socket, { ...payload, query: newQuery }, context);
+        }
+
+        // 6. USE [name] -> MASUK WILAYAH
+        if (qUpper.startsWith('USE ')) {
+            const parts = query.trim().split(/\s+/);
+            if (parts.length < 2) return this._sendError(socket, 'Syntax: USE [name]');
+            // Recruit MASUK WILAYAH logic
+            const newQuery = `MASUK WILAYAH ${parts[1]}`;
+            return this._handleQuery(socket, { ...payload, query: newQuery }, context);
+        }
+
+        // 7. SHOW DATABASES -> LIHAT WILAYAH
+        if (qUpper === 'SHOW DATABASES') {
+            const newQuery = `LIHAT WILAYAH`;
+            return this._handleQuery(socket, { ...payload, query: newQuery }, context);
+        }
+
+        // 8. DROP DATABASE [name] -> BAKAR WILAYAH
+        if (qUpper.startsWith('DROP DATABASE')) {
+            const parts = query.trim().split(/\s+/);
+            if (parts.length < 3) return this._sendError(socket, 'Syntax: DROP DATABASE [name]');
+            // Recruit BAKAR WILAYAH logic
+            const newQuery = `BAKAR WILAYAH ${parts[2]}`;
+            return this._handleQuery(socket, { ...payload, query: newQuery }, context);
+        }
+
+        // --- End Intercept ---
+
         if (!context.currentDatabase) {
-            return this._sendError(socket, 'No database selected. Use USE command first.');
+            return this._sendError(socket, 'Anda belum masuk wilayah manapun. Gunakan: MASUK WILAYAH [nama]');
         }
 
         try {

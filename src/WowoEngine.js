@@ -1,70 +1,6 @@
-const fs = require('fs');
-const BTreeIndex = require('./BTreeIndex');
-
-const PAGE_SIZE = 4096;
-const MAGIC = 'WOWO';
-
-/**
- * Pager handles 4KB page I/O
- */
-class Pager {
-    constructor(filePath) {
-        this.filePath = filePath;
-        this.fd = null;
-        this._open();
-    }
-
-    _open() {
-        if (!fs.existsSync(this.filePath)) {
-            this.fd = fs.openSync(this.filePath, 'w+');
-            this._initNewFile();
-        } else {
-            this.fd = fs.openSync(this.filePath, 'r+');
-        }
-    }
-
-    _initNewFile() {
-        const buf = Buffer.alloc(PAGE_SIZE);
-        buf.write(MAGIC, 0);
-        buf.writeUInt32LE(1, 4); // Total Pages = 1
-        buf.writeUInt32LE(0, 8); // Num Tables = 0
-        fs.writeSync(this.fd, buf, 0, PAGE_SIZE, 0);
-    }
-
-    readPage(pageId) {
-        const buf = Buffer.alloc(PAGE_SIZE);
-        const offset = pageId * PAGE_SIZE;
-        fs.readSync(this.fd, buf, 0, PAGE_SIZE, offset);
-        return buf;
-    }
-
-    writePage(pageId, buf) {
-        if (buf.length !== PAGE_SIZE) throw new Error("Buffer must be 4KB");
-        const offset = pageId * PAGE_SIZE;
-        fs.writeSync(this.fd, buf, 0, PAGE_SIZE, offset);
-        // STABILITY UPGRADE: Force write to disk. 
-        try { fs.fsyncSync(this.fd); } catch (e) { /* Ignore if not supported */ }
-    }
-
-    allocPage() {
-        const page0 = this.readPage(0);
-        const totalPages = page0.readUInt32LE(4);
-
-        const newPageId = totalPages;
-        const newTotal = totalPages + 1;
-
-        page0.writeUInt32LE(newTotal, 4);
-        this.writePage(0, page0);
-
-        const newPage = Buffer.alloc(PAGE_SIZE);
-        newPage.writeUInt32LE(0, 0); // Next Page = 0
-        newPage.writeUInt16LE(0, 4); // Count = 0
-        newPage.writeUInt16LE(8, 6); // Free Offset = 8
-        this.writePage(newPageId, newPage);
-
-        return newPageId;
-    }
-}
+const Pager = require('./modules/Pager');
+const QueryParser = require('./modules/QueryParser');
+const BTreeIndex = require('./modules/BTreeIndex');
 
 /**
  * SawitDB implements the Logic over the Pager
@@ -73,252 +9,66 @@ class SawitDB {
     constructor(filePath) {
         this.pager = new Pager(filePath);
         this.indexes = new Map(); // Map of 'tableName.fieldName' -> BTreeIndex
-    }
-
-    /**
-     * Tokenizer
-     */
-    _tokenize(sql) {
-        // Regex to match tokens: keywords, identifiers, strings, numbers, symbols, comparators
-        const tokenRegex = /\s*(=>|!=|>=|<=|<>|[(),=*.]|[a-zA-Z_]\w*|\d+|'[^']*'|"[^"]*")\s*/g;
-        const tokens = [];
-        let match;
-        while ((match = tokenRegex.exec(sql)) !== null) {
-            tokens.push(match[1]);
-        }
-        return tokens;
+        this.parser = new QueryParser();
     }
 
     query(queryString) {
-        const tokens = this._tokenize(queryString);
-        if (tokens.length === 0) return "";
+        // Parse the query into a command object
+        const cmd = this.parser.parse(queryString);
 
-        const cmd = tokens[0].toUpperCase();
+        if (cmd.type === 'EMPTY') return "";
+        if (cmd.type === 'ERROR') return `Error: ${cmd.message}`;
 
         try {
-            switch (cmd) {
-                case 'LAHAN':
-                    return this._parseCreate(tokens);
-                case 'LIHAT': // SHOW TABLES or SHOW INDEXES
-                    return this._parseShow(tokens);
-                case 'TANAM':
-                    return this._parseInsert(tokens);
-                case 'PANEN':
-                    return this._parseSelect(tokens);
-                case 'GUSUR':
-                    return this._parseDelete(tokens);
-                case 'PUPUK':
-                    return this._parseUpdate(tokens);
-                case 'BAKAR': // DROP TABLE
-                    return this._parseDrop(tokens);
-                case 'INDEKS': // CREATE INDEX
-                    return this._parseCreateIndex(tokens);
-                case 'HITUNG': // AGGREGATE
-                    return this._parseAggregate(tokens);
+            switch (cmd.type) {
+                case 'CREATE_TABLE':
+                    return this._createTable(cmd.table);
+
+                case 'SHOW_TABLES':
+                    return this._showTables();
+
+                case 'SHOW_INDEXES':
+                    return this._showIndexes(cmd.table); // cmd.table can be null
+
+                case 'INSERT':
+                    return this._insert(cmd.table, cmd.data);
+
+                case 'SELECT':
+                    // Map generic generic Select Logic
+                    const rows = this._select(cmd.table, cmd.criteria, cmd.sort, cmd.limit, cmd.offset);
+                    // Projection handled inside _select or here?
+                    // _select now handles SORT/LIMIT/OFFSET which acts on All Rows (mostly).
+                    // Projection should be last.
+
+                    if (cmd.cols.length === 1 && cmd.cols[0] === '*') return rows;
+
+                    return rows.map(r => {
+                        const newRow = {};
+                        cmd.cols.forEach(c => newRow[c] = r[c]);
+                        return newRow;
+                    });
+
+                case 'DELETE':
+                    return this._delete(cmd.table, cmd.criteria);
+
+                case 'UPDATE':
+                    return this._update(cmd.table, cmd.updates, cmd.criteria);
+
+                case 'DROP_TABLE':
+                    return this._dropTable(cmd.table);
+
+                case 'CREATE_INDEX':
+                    return this._createIndex(cmd.table, cmd.field);
+
+                case 'AGGREGATE':
+                    return this._aggregate(cmd.table, cmd.func, cmd.field, cmd.criteria, cmd.groupBy);
+
                 default:
-                    return `Perintah tidak dikenal: ${cmd}`;
+                    return `Perintah tidak dikenal atau belum diimplementasikan di Engine Refactor.`;
             }
         } catch (e) {
             return `Error: ${e.message}`;
         }
-    }
-
-    // --- Parser Methods ---
-
-    // LAHAN users
-    _parseCreate(tokens) {
-        if (tokens.length < 2) throw new Error("Syntax: LAHAN [nama_kebun]");
-        return this._createTable(tokens[1]);
-    }
-
-    // LIHAT LAHAN or LIHAT INDEKS
-    _parseShow(tokens) {
-        if (tokens[1]) {
-            const subCmd = tokens[1].toUpperCase();
-            if (subCmd === 'LAHAN') {
-                return this._showTables();
-            } else if (subCmd === 'INDEKS') {
-                const table = tokens[2] || null;
-                return this._showIndexes(table);
-            }
-        }
-        throw new Error("Syntax: LIHAT LAHAN | LIHAT INDEKS [table]");
-    }
-
-    // BAKAR LAHAN users
-    _parseDrop(tokens) {
-        if (tokens[1] && tokens[1].toUpperCase() === 'LAHAN') {
-            if (tokens.length < 3) throw new Error("Syntax: BAKAR LAHAN [nama_kebun]");
-            return this._dropTable(tokens[2]);
-        }
-        throw new Error("Syntax: BAKAR LAHAN [nama_kebun]");
-    }
-
-    // TANAM KE ...
-    _parseInsert(tokens) {
-        if (tokens[1].toUpperCase() !== 'KE') throw new Error("Syntax: TANAM KE [kebun] ...");
-        const table = tokens[2];
-
-        let i = 3;
-        const cols = [];
-        if (tokens[i] === '(') {
-            i++;
-            while (tokens[i] !== ')') {
-                if (tokens[i] !== ',') cols.push(tokens[i]);
-                i++;
-                if (i >= tokens.length) throw new Error("Unclosed parenthesis in columns");
-            }
-            i++;
-        } else {
-            throw new Error("Syntax: TANAM KE [kebun] (col1, ...) ...");
-        }
-
-        if (tokens[i].toUpperCase() !== 'BIBIT') throw new Error("Expected BIBIT");
-        i++;
-
-        const vals = [];
-        if (tokens[i] === '(') {
-            i++;
-            while (tokens[i] !== ')') {
-                if (tokens[i] !== ',') {
-                    let val = tokens[i];
-                    if (val.startsWith("'") || val.startsWith('"')) val = val.slice(1, -1);
-                    else if (!isNaN(val)) val = Number(val);
-                    vals.push(val);
-                }
-                i++;
-            }
-        } else {
-            throw new Error("Syntax: ... BIBIT (val1, ...)");
-        }
-
-        if (cols.length !== vals.length) throw new Error("Columns and Values count mismatch");
-
-        const data = {};
-        for (let k = 0; k < cols.length; k++) {
-            data[cols[k]] = vals[k];
-        }
-
-        return this._insert(table, data);
-    }
-
-    // PANEN ...
-    _parseSelect(tokens) {
-        let i = 1;
-        const cols = [];
-        while (tokens[i].toUpperCase() !== 'DARI') {
-            if (tokens[i] !== ',') cols.push(tokens[i]);
-            i++;
-            if (i >= tokens.length) throw new Error("Expected DARI");
-        }
-        i++; // Skip DARI
-        const table = tokens[i];
-        i++;
-
-        let criteria = null;
-        if (i < tokens.length && tokens[i].toUpperCase() === 'DIMANA') {
-            i++;
-            criteria = this._parseWhere(tokens, i);
-        }
-
-        const rows = this._select(table, criteria);
-        if (cols.length === 1 && cols[0] === '*') return rows;
-
-        return rows.map(r => {
-            const newRow = {};
-            cols.forEach(c => newRow[c] = r[c]);
-            return newRow;
-        });
-    }
-
-    _parseWhere(tokens, startIndex) {
-        // Enhanced parser supporting AND/OR
-        const conditions = [];
-        let i = startIndex;
-        let currentLogic = 'AND';
-
-        while (i < tokens.length) {
-            const token = tokens[i];
-            const upper = token ? token.toUpperCase() : '';
-
-            if (upper === 'AND' || upper === 'OR') {
-                currentLogic = upper;
-                i++;
-                continue;
-            }
-
-            // Stop if we hit another keyword
-            if (['DENGAN', 'ORDER', 'LIMIT', 'GROUP'].includes(upper)) {
-                break;
-            }
-
-            // Parse condition: key op val
-            if (i + 2 < tokens.length) {
-                const key = tokens[i];
-                const op = tokens[i + 1];
-                let val = tokens[i + 2];
-
-                if (val && (val.startsWith("'") || val.startsWith('"'))) {
-                    val = val.slice(1, -1);
-                } else if (val && !isNaN(val)) {
-                    val = Number(val);
-                }
-
-                conditions.push({ key, op, val, logic: currentLogic });
-                i += 3;
-            } else {
-                break;
-            }
-        }
-
-        // Return single condition format for backwards compatibility
-        if (conditions.length === 1) {
-            return conditions[0];
-        }
-
-        return { type: 'compound', conditions };
-    }
-
-    // GUSUR ...
-    _parseDelete(tokens) {
-        if (tokens[1].toUpperCase() !== 'DARI') throw new Error("Syntax: GUSUR DARI [kebun] ...");
-        const table = tokens[2];
-
-        let i = 3;
-        let criteria = null;
-        if (i < tokens.length && tokens[i].toUpperCase() === 'DIMANA') {
-            i++;
-            criteria = this._parseWhere(tokens, i);
-        }
-
-        return this._delete(table, criteria);
-    }
-
-    // PUPUK ...
-    _parseUpdate(tokens) {
-        if (tokens.length < 3) throw new Error("Syntax: PUPUK [kebun] DENGAN ...");
-        const table = tokens[1];
-        if (tokens[2].toUpperCase() !== 'DENGAN') throw new Error("Expected DENGAN");
-
-        let i = 3;
-        const updates = {};
-        while (i < tokens.length && tokens[i].toUpperCase() !== 'DIMANA') {
-            if (tokens[i] === ',') { i++; continue; }
-            const key = tokens[i];
-            if (tokens[i + 1] !== '=') throw new Error("Syntax: key=value in update list");
-            let val = tokens[i + 2];
-            if (val.startsWith("'") || val.startsWith('"')) val = val.slice(1, -1);
-            else if (!isNaN(val)) val = Number(val);
-            updates[key] = val;
-            i += 3;
-        }
-
-        let criteria = null;
-        if (i < tokens.length && tokens[i].toUpperCase() === 'DIMANA') {
-            i++;
-            criteria = this._parseWhere(tokens, i);
-        }
-        return this._update(table, updates, criteria);
     }
 
     // --- Core Logic ---
@@ -357,13 +107,14 @@ class SawitDB {
     }
 
     _createTable(name) {
+        if (!name) throw new Error("Nama kebun tidak boleh kosong");
         if (name.length > 32) throw new Error("Nama kebun max 32 karakter");
         if (this._findTableEntry(name)) return `Kebun '${name}' sudah ada.`;
 
         const p0 = this.pager.readPage(0);
         const numTables = p0.readUInt32LE(8);
         let offset = 12 + (numTables * 40);
-        if (offset + 40 > PAGE_SIZE) throw new Error("Lahan penuh (Page 0 full)");
+        if (offset + 40 > Pager.PAGE_SIZE) throw new Error("Lahan penuh (Page 0 full)");
 
         const newPageId = this.pager.allocPage();
 
@@ -429,7 +180,7 @@ class SawitDB {
         let pData = this.pager.readPage(currentPageId);
         let freeOffset = pData.readUInt16LE(6);
 
-        if (freeOffset + totalLen > PAGE_SIZE) {
+        if (freeOffset + totalLen > Pager.PAGE_SIZE) {
             const newPageId = this.pager.allocPage();
             pData.writeUInt32LE(newPageId, 0);
             this.pager.writePage(currentPageId, pData);
@@ -448,7 +199,20 @@ class SawitDB {
         pData.writeUInt16LE(freeOffset + totalLen, 6);
 
         this.pager.writePage(currentPageId, pData);
+
+        // Update Indexes if any
+        this._updateIndexes(table, data);
+
         return "Bibit tertanam.";
+    }
+
+    _updateIndexes(table, data) {
+        for (const [indexKey, index] of this.indexes) {
+            const [tbl, field] = indexKey.split('.');
+            if (tbl === table && data.hasOwnProperty(field)) {
+                index.insert(data[field], data);
+            }
+        }
     }
 
     _checkMatch(obj, criteria) {
@@ -457,20 +221,22 @@ class SawitDB {
         // Handle compound conditions (AND/OR)
         if (criteria.type === 'compound') {
             let result = true;
-            let currentLogic = 'AND';
+            let currentLogic = 'AND'; // Initial logic is irrelevant for first item, but technically AND identity is true
 
-            for (const cond of criteria.conditions) {
+            for (let i = 0; i < criteria.conditions.length; i++) {
+                const cond = criteria.conditions[i];
                 const matches = this._checkSingleCondition(obj, cond);
-                
-                if (cond.logic === 'OR' || currentLogic === 'OR') {
-                    result = result || matches;
-                    currentLogic = 'OR';
+
+                if (i === 0) {
+                    result = matches;
                 } else {
-                    result = result && matches;
-                    currentLogic = 'AND';
+                    if (cond.logic === 'OR') {
+                        result = result || matches;
+                    } else {
+                        result = result && matches;
+                    }
                 }
             }
-
             return result;
         }
 
@@ -488,25 +254,72 @@ class SawitDB {
             case '<': return val < target;
             case '>=': return val >= target;
             case '<=': return val <= target;
+            case 'IN': return Array.isArray(target) && target.includes(val);
+            case 'NOT IN': return Array.isArray(target) && !target.includes(val);
+            case 'LIKE':
+                // Simple regex-like match. Handle % for wildcards.
+                const regexStr = '^' + target.replace(/%/g, '.*') + '$';
+                const re = new RegExp(regexStr, 'i');
+                return re.test(String(val));
+            case 'BETWEEN':
+                return val >= target[0] && val <= target[1];
+            case 'IS NULL':
+                return val === null || val === undefined;
+            case 'IS NOT NULL':
+                return val !== null && val !== undefined;
             default: return false;
         }
     }
 
-    _select(table, criteria) {
+    _select(table, criteria, sort, limit, offsetCount) {
         const entry = this._findTableEntry(table);
         if (!entry) throw new Error(`Kebun '${table}' tidak ditemukan.`);
 
-        // Try to use index if available and criteria is simple
-        if (criteria && !criteria.type && criteria.op === '=') {
+        // Optimization: If Index exists and criteria is simple '='
+        // Only valid if NO sorting is needed, or if index matches sort (not implemented yet).
+        // For now, always do full scan if sort/fancy criteria involved 
+        // OR rely on in-memory sort after index fetch.
+
+        let results = [];
+
+        // --- 1. Fetch Candidates ---
+        if (criteria && !criteria.type && criteria.op === '=' && !sort) {
+            // Index optimization path - only if no sort (for safety)
+            // ... (Index Logic) ...
             const indexKey = `${table}.${criteria.key}`;
             if (this.indexes.has(indexKey)) {
                 const index = this.indexes.get(indexKey);
-                const indexedRecords = index.search(criteria.val);
-                return indexedRecords;
+                results = index.search(criteria.val);
+            } else {
+                results = this._scanTable(entry, criteria);
             }
+        } else {
+            results = this._scanTable(entry, criteria);
         }
 
-        // Fall back to full table scan
+        // --- 2. Sorting (In-Memory) ---
+        if (sort) {
+            // sort = { key, dir: 'ASC' | 'DESC' }
+            results.sort((a, b) => {
+                const valA = a[sort.key];
+                const valB = b[sort.key];
+                if (valA < valB) return sort.dir === 'asc' ? -1 : 1;
+                if (valA > valB) return sort.dir === 'asc' ? 1 : -1;
+                return 0;
+            });
+        }
+
+        // --- 3. Limit & Offset ---
+        let start = 0;
+        let end = results.length;
+
+        if (offsetCount) start = offsetCount;
+        if (limit) end = start + limit;
+
+        return results.slice(start, end);
+    }
+
+    _scanTable(entry, criteria) {
         let currentPageId = entry.startPage;
         const results = [];
 
@@ -597,19 +410,6 @@ class SawitDB {
 
     // --- Index Management ---
 
-    /**
-     * Create an index on a table field
-     * INDEKS [table] PADA [field]
-     */
-    _parseCreateIndex(tokens) {
-        if (tokens.length < 4) throw new Error("Syntax: INDEKS [table] PADA [field]");
-        const table = tokens[1];
-        if (tokens[2].toUpperCase() !== 'PADA') throw new Error("Expected PADA");
-        const field = tokens[3];
-
-        return this._createIndex(table, field);
-    }
-
     _createIndex(table, field) {
         const entry = this._findTableEntry(table);
         if (!entry) throw new Error(`Kebun '${table}' tidak ditemukan.`);
@@ -654,78 +454,7 @@ class SawitDB {
         }
     }
 
-    // Override _insert to update indexes
-    _insertWithIndexUpdate(table, data) {
-        const result = this._insert(table, data);
-        
-        // Update indexes
-        for (const [indexKey, index] of this.indexes) {
-            const [tbl, field] = indexKey.split('.');
-            if (tbl === table && data.hasOwnProperty(field)) {
-                index.insert(data[field], data);
-            }
-        }
-
-        return result;
-    }
-
     // --- Aggregation Support ---
-
-    /**
-     * Aggregate functions: COUNT, SUM, AVG, MIN, MAX, GROUP BY
-     * HITUNG COUNT(*) DARI [table]
-     * HITUNG SUM(field) DARI [table] DIMANA ...
-     * HITUNG AVG(field) DARI [table] KELOMPOK [field]
-     */
-    _parseAggregate(tokens) {
-        let i = 1;
-        
-        // Parse aggregate function
-        const funcToken = tokens[i];
-        let aggFunc = null;
-        let aggField = null;
-
-        if (funcToken.includes('(')) {
-            // Parse FUNC(field)
-            const match = funcToken.match(/([A-Z]+)\\((.*)\\)/);
-            if (match) {
-                aggFunc = match[1];
-                aggField = match[2] === '*' ? null : match[2];
-            }
-            i++;
-        } else {
-            throw new Error("Syntax: HITUNG FUNC(field) DARI [table]");
-        }
-
-        // Expect DARI
-        if (!tokens[i] || tokens[i].toUpperCase() !== 'DARI') {
-            throw new Error("Expected DARI");
-        }
-        i++;
-
-        const table = tokens[i];
-        i++;
-
-        // Parse WHERE clause
-        let criteria = null;
-        if (i < tokens.length && tokens[i].toUpperCase() === 'DIMANA') {
-            i++;
-            criteria = this._parseWhere(tokens, i);
-            // Skip past where conditions
-            while (i < tokens.length && !['KELOMPOK'].includes(tokens[i].toUpperCase())) {
-                i++;
-            }
-        }
-
-        // Parse GROUP BY
-        let groupField = null;
-        if (i < tokens.length && tokens[i].toUpperCase() === 'KELOMPOK') {
-            i++;
-            groupField = tokens[i];
-        }
-
-        return this._aggregate(table, aggFunc, aggField, criteria, groupField);
-    }
 
     _aggregate(table, func, field, criteria, groupBy) {
         const records = this._select(table, criteria);
@@ -737,27 +466,27 @@ class SawitDB {
         switch (func.toUpperCase()) {
             case 'COUNT':
                 return { count: records.length };
-            
+
             case 'SUM':
                 if (!field) throw new Error("SUM requires a field");
                 const sum = records.reduce((acc, r) => acc + (Number(r[field]) || 0), 0);
                 return { sum, field };
-            
+
             case 'AVG':
                 if (!field) throw new Error("AVG requires a field");
                 const avg = records.reduce((acc, r) => acc + (Number(r[field]) || 0), 0) / records.length;
                 return { avg, field, count: records.length };
-            
+
             case 'MIN':
                 if (!field) throw new Error("MIN requires a field");
                 const min = Math.min(...records.map(r => Number(r[field]) || Infinity));
                 return { min, field };
-            
+
             case 'MAX':
                 if (!field) throw new Error("MAX requires a field");
                 const max = Math.max(...records.map(r => Number(r[field]) || -Infinity));
                 return { max, field };
-            
+
             default:
                 throw new Error(`Unknown aggregate function: ${func}`);
         }
@@ -784,27 +513,25 @@ class SawitDB {
                 case 'COUNT':
                     result.count = groupRecords.length;
                     break;
-                
+
                 case 'SUM':
                     result.sum = groupRecords.reduce((acc, r) => acc + (Number(r[field]) || 0), 0);
                     break;
-                
+
                 case 'AVG':
                     result.avg = groupRecords.reduce((acc, r) => acc + (Number(r[field]) || 0), 0) / groupRecords.length;
                     break;
-                
+
                 case 'MIN':
                     result.min = Math.min(...groupRecords.map(r => Number(r[field]) || Infinity));
                     break;
-                
+
                 case 'MAX':
                     result.max = Math.max(...groupRecords.map(r => Number(r[field]) || -Infinity));
                     break;
             }
-
             results.push(result);
         }
-
         return results;
     }
 }
