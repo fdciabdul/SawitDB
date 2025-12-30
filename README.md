@@ -7,7 +7,7 @@
 
 The system features a custom **Paged Heap File** architecture similar to SQLite, using fixed-size 4KB pages to ensure efficient memory usage. What differentiates SawitDB is its unique **Agricultural Query Language (AQL)**, which replaces standard SQL keywords with Indonesian farming terminology.
 
-**Now with Network Edition v2.0!** Connect via TCP using `sawitdb://` protocol similar to MongoDB.
+**Now with Network Edition!** Connect via TCP using `sawitdb://` protocol similar to MongoDB.
 
 **🚨 Emergency: Aceh Flood Relief**
 Please support our brothers and sisters in Aceh.
@@ -52,7 +52,7 @@ Ensure you have Node.js installed. Clone the repository.
 git clone https://github.com/WowoEngine/SawitDB.git
 ```
 
-## Quick Start (Network Edition v2.2)
+## Quick Start (Network Edition)
 
 ### 1. Start the Server
 ```bash
@@ -65,7 +65,7 @@ Use [SawitClient](#client-api) or any interactive session.
 
 ---
 
-## Dual Syntax Support (New in v2.2)
+## Dual Syntax Support
 
 SawitDB 2.2 introduces the **Generic Syntax** alongside the classic **Agricultural Query Language (AQL)**, making it easier for developers familiar with standard SQL to adopt.
 
@@ -133,7 +133,7 @@ SELECT name, role FROM users WHERE role = 'Admin' ORDER BY name ASC LIMIT 10
 *Operators*: `=`, `!=`, `>`, `<`, `>=`, `<=`
 *Advanced*: `IN ('a','b')`, `LIKE 'pat%'`, `BETWEEN 10 AND 20`, `IS NULL`, `IS NOT NULL`
 
-#### Pagination & Sorting (New in v2.3)
+#### Pagination & Sorting
 ```sql
 SELECT * FROM users ORDER BY age DESC LIMIT 5 OFFSET 10
 SELECT * FROM users WHERE age BETWEEN 18 AND 30 AND status IS NOT NULL
@@ -174,11 +174,11 @@ SELECT AVG(price) FROM [products] GROUP BY [category] (Coming Soon)
 
 ## Architecture Details
 
-- **Modular Codebase (v2.2)**: Engine logic separated into `src/modules/` (`Pager.js`, `QueryParser.js`, `BTreeIndex.js`) for better maintainability.
+- **Modular Codebase**: Engine logic separated into `src/modules/` (`Pager.js`, `QueryParser.js`, `BTreeIndex.js`) for better maintainability.
 - **Page 0 (Master Page)**: Contains header and Table Directory.
 - **Data & Indexes**: Stored in 4KB atomic pages.
 
-## 📊 Benchmark Performance (v2.3)
+## Benchmark Performance
 Test Environment: Single Thread, Windows Node.js (Local NVMe)
 
 | Operation | Ops/Sec | Latency (avg) |
@@ -190,31 +190,41 @@ Test Environment: Single Thread, Windows Node.js (Local NVMe)
 
 *Note: Hasil dapat bervariasi tergantung hardware.*
 
-## 📜 Full Feature Comparison (v2.3)
+## Full Feature Comparison
 
-| Feature | Tani Edition (AQL) | Generic SQL (Standard) |
-|---------|-------------------|------------------------|
-| **Create DB** | `BUKA WILAYAH [db]` | `CREATE DATABASE [db]` |
-| **Use DB** | `MASUK WILAYAH [db]` | `USE [db]` |
-| **Show DBs** | `LIHAT WILAYAH` | `SHOW DATABASES` |
-| **Drop DB** | `BAKAR WILAYAH [db]` | `DROP DATABASE [db]` |
-| **Create Table** | `LAHAN [table]` | `CREATE TABLE [table]` |
-| **Insert** | `TANAM KE [table] ... BIBIT (...)` | `INSERT INTO [table] (...) VALUES (...)` |
-| **Select** | `PANEN ... DARI [table] DIMANA ...` | `SELECT ... FROM [table] WHERE ...` |
-| **Update** | `PUPUK [table] DENGAN ... DIMANA ...` | `UPDATE [table] SET ... WHERE ...` |
-| **Delete** | `GUSUR DARI [table] DIMANA ...` | `DELETE FROM [table] WHERE ...` |
-| **Index** | `INDEKS [table] PADA [field]` | `CREATE INDEX ON [table] (field)` |
-| **Count** | `HITUNG COUNT(*) DARI [table]` | `SELECT COUNT(*) FROM [table]` (via HITUNG) |
+| Feature | Tani Edition (AQL) | Generic SQL (Standard) | Notes |
+|---------|-------------------|------------------------|-------|
+| **Create DB** | `BUKA WILAYAH [db]` | `CREATE DATABASE [db]` | Creates `.sawit` in data/ |
+| **Use DB** | `MASUK WILAYAH [db]` | `USE [db]` | Switch context |
+| **Show DBs** | `LIHAT WILAYAH` | `SHOW DATABASES` | Lists available DBs |
+| **Drop DB** | `BAKAR WILAYAH [db]` | `DROP DATABASE [db]` | **Irreversible!** |
+| **Create Table** | `LAHAN [table]` | `CREATE TABLE [table]` | Schema-less creation |
+| **Show Tables** | `LIHAT LAHAN` | `SHOW TABLES` | Lists tables in DB |
+| **Drop Table** | `BAKAR LAHAN [table]` | `DROP TABLE [table]` | Deletes table & data |
+| **Insert** | `TANAM KE [table] ... BIBIT (...)` | `INSERT INTO [table] (...) VALUES (...)` | Auto-ID if omitted |
+| **Select** | `PANEN ... DARI [table] DIMANA ...` | `SELECT ... FROM [table] WHERE ...` | Supports Projection |
+| **Update** | `PUPUK [table] DENGAN ... DIMANA ...` | `UPDATE [table] SET ... WHERE ...` | Atomic update |
+| **Delete** | `GUSUR DARI [table] DIMANA ...` | `DELETE FROM [table] WHERE ...` | Row-level deletion |
+| **Index** | `INDEKS [table] PADA [field]` | `CREATE INDEX ON [table] (field)` | B-Tree Indexing |
+| **Count** | `HITUNG COUNT(*) DARI [table]` | `SELECT COUNT(*) FROM [table]` (via HITUNG) | Aggregation |
+| **Sum** | `HITUNG SUM(col) DARI [table]` | `SELECT SUM(col) FROM [table]` (via HITUNG) | Aggregation |
+| **Average** | `HITUNG AVG(col) DARI [table]` | `SELECT AVG(col) FROM [table]` (via HITUNG) | Aggregation |
 
-### Supported Operators
-*   **Comparison**: `=`, `!=`, `>`, `<`, `>=`, `<=`
-*   **Logical**: `AND`, `OR`
-*   **Create**: `IN ('a','b')`, `NOT IN (...)`
-*   **Pattern**: `LIKE 'value%'`
-*   **Range**: `BETWEEN min AND max`
-*   **Null Check**: `IS NULL`, `IS NOT NULL`
-*   **Pagination**: `LIMIT n`, `OFFSET m`
-*   **Sorting**: `ORDER BY field [ASC|DESC]`
+### Supported Operators Table
+
+| Operator | Syntax Example | Description |
+|----------|----------------|-------------|
+| **Comparison** | `=`, `!=`, `>`, `<`, `>=`, `<=` | Standard value comparison |
+| **Logical** | `AND`, `OR` | Combine multiple conditions |
+| **In List** | `IN ('coffee', 'tea')` | Matches any value in the list |
+| **Not In** | `NOT IN ('water')` | Matches values NOT in list |
+| **Pattern** | `LIKE 'Jwa%'` | Standard SQL wildcard matching |
+| **Range** | `BETWEEN 1000 AND 5000` | Inclusive range check |
+| **Null** | `IS NULL` | Check if field is empty/null |
+| **Not Null** | `IS NOT NULL` | Check if field has value |
+| **Limit** | `LIMIT 10` | Restrict number of rows |
+| **Offset** | `OFFSET 5` | Skip first N rows (Pagination) |
+| **Order** | `ORDER BY price DESC` | Sort by field (ASC/DESC) |
 
 <!-- ## Support Developer
 - [![Saweria](https://img.shields.io/badge/Saweria-Support%20Me-orange?style=flat&logo=ko-fi)](https://saweria.co/patradev)
