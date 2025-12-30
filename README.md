@@ -41,7 +41,7 @@ SawitDB is built with the spirit of "Data Sovereignty". We believe a reliable da
 - `bin/sawit-server.js`: Server executable.
 - `cli/local.js`: Interactive CLI tool (Local).
 - `cli/remote.js`: Interactive CLI tool (Network).
-- `[CHANGELOG.md](CHANGELOG.md)`: Version history and release notes.
+- [CHANGELOG.md](CHANGELOG.md): Version history and release notes.
 - `examples/`: Sample scripts.
 
 ## Installation
