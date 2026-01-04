@@ -5,6 +5,7 @@
 <div align="center">
 
 [![Docs](https://img.shields.io/badge/Docs-Read%20Now-blue?style=for-the-badge&logo=googledocs)](https://wowoengine.github.io/SawitDB/)
+[![Go Version](https://img.shields.io/badge/Go%20Version-Visit%20Repo-cyan?style=for-the-badge&logo=go)](https://github.com/WowoEngine/SawitDB-Go)
 [![Changelog](https://img.shields.io/badge/Changelog-Read%20Updates-orange?style=for-the-badge&logo=github)](CHANGELOG.md)
 
 </div>
@@ -233,7 +234,9 @@ Test Environment: Single Thread, Windows Node.js (Local NVMe)
 | **Limit** | `LIMIT 10` | Restrict number of rows |
 | **Offset** | `OFFSET 5` | Skip first N rows (Pagination) |
 | **Order** | `ORDER BY price DESC` | Sort by field (ASC/DESC) |
+## License
 
+MIT License
 <!-- ## Support Developer
 - [![Saweria](https://img.shields.io/badge/Saweria-Support%20Me-orange?style=flat&logo=ko-fi)](https://saweria.co/patradev)
 
