@@ -5,6 +5,7 @@
 <div align="center">
 
 [![Docs](https://img.shields.io/badge/Docs-Read%20Now-blue?style=for-the-badge&logo=googledocs)](https://wowoengine.github.io/SawitDB/)
+[![NPM](https://img.shields.io/npm/v/@wowoengine/sawitdb?style=for-the-badge&logo=npm)](https://www.npmjs.com/package/@wowoengine/sawitdb)
 [![Go Version](https://img.shields.io/badge/Go%20Version-Visit%20Repo-cyan?style=for-the-badge&logo=go)](https://github.com/WowoEngine/SawitDB-Go)
 [![Changelog](https://img.shields.io/badge/Changelog-Read%20Updates-orange?style=for-the-badge&logo=github)](CHANGELOG.md)
 
@@ -15,7 +16,7 @@
 
 The system features a custom **Paged Heap File** architecture similar to SQLite, using fixed-size 4KB pages to ensure efficient memory usage. What differentiates SawitDB is its unique **Agricultural Query Language (AQL)**, which replaces standard SQL keywords with Indonesian farming terminology.
 
-**Now with Network Edition!** Connect via TCP using `sawitdb://` protocol similar to MongoDB.
+**Now availability on NPM!** Connect via TCP using `sawitdb://` protocol similar to MongoDB.
 
 **🚨 Emergency: Aceh Flood Relief**
 Please support our brothers and sisters in Aceh.
@@ -34,6 +35,7 @@ Please support our brothers and sisters in Aceh.
 - **Transparansi**: Query language is clear. No "Pasal Karet" (Ambiguous Laws) or "Rapat Tertutup" in 5-star hotels.
 - **Speed**: Faster than printing an e-KTP at the Kelurahan.
 - **Network Support (NEW)**: Client-Server architecture with Multi-database support and Authentication.
+- **NPM Support (NEW)**: Install via `npm install @wowoengine/sawitdb`.
 
 ## Filosofi
 
@@ -54,11 +56,10 @@ SawitDB is built with the spirit of "Data Sovereignty". We believe a reliable da
 
 ## Installation
 
-Ensure you have Node.js installed. Clone the repository.
+Install via NPM:
 
 ```bash
-# Clone
-git clone https://github.com/WowoEngine/SawitDB.git
+npm install @wowoengine/sawitdb
 ```
 
 ## Quick Start (Network Edition)
