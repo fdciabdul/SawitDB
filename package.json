@@ -13,6 +13,18 @@
   },
   "keywords": [
     "database",
+    "database-engine",
+    "database-server",
+    "database-client",
+    "database-remote",
+    "database-local",
+    "database-embedded",
+    "database-single-file",
+    "database-binary",
+    "database-file",
+    "sawitdb",
+    "wowoengine",
+    "wowoengine/sawitdb",
     "document-database",
     "nosql",
     "json",
@@ -43,7 +55,6 @@
     "bin/",
     "cli/",
     "docs/",
-    "README.md",
-    "README_NETWORK.md"
+    "README.md"
   ]
 }

@@ -1,5 +1,6 @@
 # SawitDB - Git Ignore
 .gitignore
+PUBLISHING.md
 
 # Database Files
 *.sawit
