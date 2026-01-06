@@ -8,7 +8,8 @@ class QueryParser {
 
     tokenize(sql) {
         // Regex to match tokens
-        const tokenRegex = /\s*(=>|!=|>=|<=|<>|[(),=*.<>?]|[a-zA-Z_]\w*|@\w+|\d+|'[^']*'|"[^"]*")\s*/g;
+        // Updated to capture table.column as a single token
+        const tokenRegex = /\s*(=>|!=|>=|<=|<>|[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)?|@\w+|\d+|'[^']*'|"[^"]*"|[(),=*.<>?])\s*/g;
         const tokens = [];
         let match;
         while ((match = tokenRegex.exec(sql)) !== null) {
@@ -194,6 +195,28 @@ class QueryParser {
         const table = tokens[i];
         i++;
 
+        const joins = [];
+        while (i < tokens.length && ['JOIN', 'GABUNG'].includes(tokens[i].toUpperCase())) {
+            i++; // Skip JOIN/GABUNG
+            const joinTable = tokens[i];
+            i++;
+
+            if (i >= tokens.length || !['ON', 'PADA'].includes(tokens[i].toUpperCase())) {
+                throw new Error("Syntax: JOIN [table] ON [condition]");
+            }
+            i++; // Skip ON/PADA
+
+            // Simple ON condition: table1.col = table2.col
+            const left = tokens[i];
+            i++;
+            const op = tokens[i];
+            i++;
+            const right = tokens[i];
+            i++;
+
+            joins.push({ table: joinTable, on: { left, op, right } });
+        }
+
         let criteria = null;
         if (i < tokens.length && ['DIMANA', 'WHERE'].includes(tokens[i].toUpperCase())) {
             i++;
@@ -237,7 +260,7 @@ class QueryParser {
             i++;
         }
 
-        return { type: 'SELECT', table, cols, criteria, sort, limit, offset };
+        return { type: 'SELECT', table, cols, joins, criteria, sort, limit, offset };
     }
 
     parseWhere(tokens, startIndex) {
