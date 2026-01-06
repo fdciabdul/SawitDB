@@ -35,7 +35,7 @@ class SawitDB {
 
                 case 'SELECT':
                     // Map generic generic Select Logic
-                    const rows = this._select(cmd.table, cmd.criteria, cmd.sort, cmd.limit, cmd.offset);
+                    const rows = this._select(cmd.table, cmd.criteria, cmd.sort, cmd.limit, cmd.offset, cmd.joins);
                     // Projection handled inside _select or here?
                     // _select now handles SORT/LIMIT/OFFSET which acts on All Rows (mostly).
                     // Projection should be last.
@@ -271,30 +271,85 @@ class SawitDB {
         }
     }
 
-    _select(table, criteria, sort, limit, offsetCount) {
+    _select(table, criteria, sort, limit, offsetCount, joins) {
         const entry = this._findTableEntry(table);
         if (!entry) throw new Error(`Kebun '${table}' tidak ditemukan.`);
 
         // Optimization: If Index exists and criteria is simple '='
         // Only valid if NO sorting is needed, or if index matches sort (not implemented yet).
-        // For now, always do full scan if sort/fancy criteria involved 
+        // For now, always do full scan if sort/fancy criteria involved
         // OR rely on in-memory sort after index fetch.
 
         let results = [];
 
-        // --- 1. Fetch Candidates ---
-        if (criteria && !criteria.type && criteria.op === '=' && !sort) {
-            // Index optimization path - only if no sort (for safety)
-            // ... (Index Logic) ...
-            const indexKey = `${table}.${criteria.key}`;
-            if (this.indexes.has(indexKey)) {
-                const index = this.indexes.get(indexKey);
-                results = index.search(criteria.val);
+        if (joins && joins.length > 0) {
+            // --- JOIN LOGIC (Nested Loop) ---
+
+            // 1. Scan Main Table (fetch all, ignore criteria for now)
+            // Transform rows to include prefixed keys: table.key
+            let currentRows = this._scanTable(entry, null).map(row => {
+                const newRow = { ...row };
+                for (const k in row) {
+                    newRow[`${table}.${k}`] = row[k];
+                }
+                return newRow;
+            });
+
+            // 2. Perform Joins
+            for (const join of joins) {
+                const joinEntry = this._findTableEntry(join.table);
+                if (!joinEntry) throw new Error(`Kebun '${join.table}' tidak ditemukan.`);
+                const joinRows = this._scanTable(joinEntry, null);
+
+                const nextRows = [];
+                for (const leftRow of currentRows) {
+                    for (const rightRow of joinRows) {
+                        // Prepare right row with prefixes
+                        const rightRowPrefixed = { ...rightRow };
+                        for (const k in rightRow) {
+                            rightRowPrefixed[`${join.table}.${k}`] = rightRow[k];
+                        }
+
+                        // Check ON condition
+                        const lVal = leftRow[join.on.left];
+                        const rVal = rightRowPrefixed[join.on.right];
+
+                        let match = false;
+                        // Simple equality check for now
+                        if (join.on.op === '=') match = lVal == rVal;
+                        // TODO: Add other operators if needed
+
+                        if (match) {
+                            // Merge rows
+                            nextRows.push({ ...leftRow, ...rightRowPrefixed });
+                        }
+                    }
+                }
+                currentRows = nextRows;
+            }
+            results = currentRows;
+
+            // 3. Apply Criteria on Joined Results
+            if (criteria) {
+                results = results.filter(r => this._checkMatch(r, criteria));
+            }
+
+        } else {
+            // --- STANDARD SINGLE TABLE LOGIC ---
+            // 1. Fetch Candidates
+            if (criteria && !criteria.type && criteria.op === '=' && !sort) {
+                // Index optimization path - only if no sort (for safety)
+                // ... (Index Logic) ...
+                const indexKey = `${table}.${criteria.key}`;
+                if (this.indexes.has(indexKey)) {
+                    const index = this.indexes.get(indexKey);
+                    results = index.search(criteria.val);
+                } else {
+                    results = this._scanTable(entry, criteria);
+                }
             } else {
                 results = this._scanTable(entry, criteria);
             }
-        } else {
-            results = this._scanTable(entry, criteria);
         }
 
         // --- 2. Sorting (In-Memory) ---
