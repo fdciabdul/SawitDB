@@ -44,14 +44,14 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/WowoEngine/SawitDB.git"
+    "url": "git+https://github.com/WowoEngine/SawitDB.git"
   },
   "engines": {
     "node": ">=12.0.0"
   },
   "bin": {
-    "sawitdb-server": "./bin/sawit-server.js",
-    "sawitdb-cli": "./cli/remote.js"
+    "sawitdb-server": "bin/sawit-server.js",
+    "sawitdb-cli": "cli/remote.js"
   },
   "files": [
     "src/",
