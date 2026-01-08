@@ -123,7 +123,7 @@ class SawitServer {
 
         this.server.listen(this.port, this.host, () => {
             console.log(`╔══════════════════════════════════════════════════╗`);
-            console.log(`║         🌴 SawitDB Server - Version 2.5.0        ║`);
+            console.log(`║         🌴 SawitDB Server - Version 2.6.0        ║`);
             console.log(`╚══════════════════════════════════════════════════╝`);
             console.log(`[Server] Listening on ${this.host}:${this.port}`);
             console.log(
