@@ -26,7 +26,10 @@ const config = {
         enabled: process.env.SAWIT_WAL_ENABLED !== 'false', // Default true if not explicitly false
         syncMode: process.env.SAWIT_WAL_SYNC_MODE || 'normal',
         checkpointInterval: parseInt(process.env.SAWIT_WAL_CHECKPOINT_INTERVAL) || 10000
-    }
+    },
+    // Multi-Threading Configuration
+    clusterMode: process.env.SAWIT_CLUSTER_MODE === 'true',
+    workerCount: parseInt(process.env.SAWIT_CLUSTER_WORKERS) || 0
 };
 
 // Parse authentication if provided
@@ -44,6 +47,7 @@ console.log(`  - Host: ${config.host}`);
 console.log(`  - Data Directory: ${config.dataDir}`);
 console.log(`  - Auth: ${config.auth ? 'Enabled' : 'Disabled'}`);
 console.log(`  - WAL: ${config.wal.enabled ? 'Enabled (' + config.wal.syncMode + ')' : 'Disabled'}`);
+console.log(`  - Mode: ${config.clusterMode ? 'CLUSTER (Workers: ' + (config.workerCount || 'Auto') + ')' : 'SINGLE THREAD'}`);
 console.log('');
 
 // Create and start server
