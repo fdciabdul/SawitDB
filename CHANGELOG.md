@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [v2.6.0] - Upcoming!
+## [v2.6.0] - 2026-01-10
 
 ### Modular Architecture (Codebase Refactor)
 - **Service-Oriented Core**: Split monolithic `WowoEngine.js` into specialized modules:
