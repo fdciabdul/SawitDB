@@ -1,27 +1,31 @@
 const net = require('net');
-const crypto = require('crypto');
-const SawitDB = require('./WowoEngine');
 const path = require('path');
 const fs = require('fs');
-const { parentPort, workerData, isMainThread } = require('worker_threads');
+
+// Modular Components
+const AuthManager = require('./server/auth/AuthManager');
+const DatabaseRegistry = require('./server/DatabaseRegistry');
+const RequestRouter = require('./server/router/RequestRouter');
+const ClientSession = require('./server/session/ClientSession');
 
 /**
  * SawitDB Server - Network Database Server
  * Supports sawitdb:// protocol connections
+ * Refactored to use modular components.
  */
 class SawitServer {
     constructor(config = {}) {
-        // Validate and set configuration
-        this.port = this.#validatePort(config.port || 7878);
+        // Configuration
+        this.port = this.validatePort(config.port || 7878);
         this.host = config.host || '0.0.0.0';
-        this.dataDir = config.dataDir || path.join(__dirname, '../data');
-        this.databases = new Map(); // Map of database name -> SawitDB instance
+        this.maxConnections = config.maxConnections || 100;
+        this.queryTimeout = config.queryTimeout || 30000;
+        this.logLevel = config.logLevel || 'info';
+
+        // State
+        this.config = config;
         this.clients = new Set();
         this.server = null;
-        this.auth = config.auth || null; // { username: 'password' }
-        this.maxConnections = config.maxConnections || 100;
-        this.queryTimeout = config.queryTimeout || 30000; // 30 seconds
-        this.logLevel = config.logLevel || 'info'; // 'debug', 'info', 'warn', 'error'
         this.stats = {
             totalConnections: 0,
             activeConnections: 0,
@@ -29,20 +33,20 @@ class SawitServer {
             errors: 0,
             startTime: Date.now()
         };
-        this.config = config; // Store full config for worker_threads check
 
-        // Ensure data directory exists
-        if (!fs.existsSync(this.dataDir)) {
-            fs.mkdirSync(this.dataDir, { recursive: true });
-        }
+        // Initialize Managers
+        this.dbRegistry = new DatabaseRegistry(
+            config.dataDir || path.join(__dirname, '../data'),
+            config
+        );
+        this.authManager = new AuthManager(this);
+        this.router = new RequestRouter(this);
 
-        this.#log('info', `Data directory: ${this.dataDir}`);
-        this.#log('info', `Max connections: ${this.maxConnections}`);
-
-        this.walConfig = config.wal || { enabled: false };
+        this.log('info', `Data directory: ${this.dbRegistry.dataDir}`);
+        this.log('info', `Max connections: ${this.maxConnections}`);
     }
 
-    #validatePort(port) {
+    validatePort(port) {
         const p = parseInt(port, 10);
         if (isNaN(p) || p < 1 || p > 65535) {
             throw new Error(`Invalid port: ${port}. Must be between 1-65535`);
@@ -50,62 +54,7 @@ class SawitServer {
         return p;
     }
 
-    /**
-     * Hash a password using SHA-256 with salt
-     * @param {string} password - Plain text password
-     * @param {string} salt - Optional salt (generated if not provided)
-     * @returns {string} - Format: salt:hash
-     */
-    static hashPassword(password, salt = null) {
-        salt = salt || crypto.randomBytes(16).toString('hex');
-        const hash = crypto
-            .createHash('sha256')
-            .update(salt + password)
-            .digest('hex');
-        return `${salt}:${hash}`;
-    }
-
-    /**
-     * Verify a password against a stored hash using timing-safe comparison
-     * @param {string} password - Plain text password to verify
-     * @param {string} storedHash - Stored hash in format "salt:hash" or plain text
-     * @returns {boolean}
-     */
-    #verifyPassword(password, storedHash) {
-        // Support both hashed (salt:hash) and legacy plaintext passwords
-        if (storedHash.includes(':')) {
-            const [salt, hash] = storedHash.split(':');
-            const computedHash = crypto
-                .createHash('sha256')
-                .update(salt + password)
-                .digest('hex');
-            // Timing-safe comparison to prevent timing attacks
-            try {
-                return crypto.timingSafeEqual(
-                    Buffer.from(hash, 'hex'),
-                    Buffer.from(computedHash, 'hex')
-                );
-            } catch (e) {
-                return false;
-            }
-        } else {
-            // Legacy plaintext comparison with timing-safe method
-            // Pad both strings to same length to prevent length-based timing attacks
-            const maxLen = Math.max(password.length, storedHash.length);
-            const paddedInput = password.padEnd(maxLen, '\0');
-            const paddedStored = storedHash.padEnd(maxLen, '\0');
-            try {
-                return crypto.timingSafeEqual(
-                    Buffer.from(paddedInput),
-                    Buffer.from(paddedStored)
-                );
-            } catch (e) {
-                return false;
-            }
-        }
-    }
-
-    #log(level, message, data = null) {
+    log(level, message, data = null) {
         const levels = { debug: 0, info: 1, warn: 2, error: 3 };
         const currentLevel = levels[this.logLevel] || 1;
         const msgLevel = levels[level] || 1;
@@ -121,7 +70,7 @@ class SawitServer {
     }
 
     start() {
-        this.server = net.createServer((socket) => this.#handleConnection(socket));
+        this.server = net.createServer((socket) => this.handleConnection(socket));
 
         this.server.listen(this.port, this.host, () => {
             const cluster = require('cluster');
@@ -129,7 +78,7 @@ class SawitServer {
 
             if (!cluster.isWorker) {
                 console.log(`╔══════════════════════════════════════════════════╗`);
-                console.log(`║         🌴 SawitDB Server - Version 2.6.0        ║`);
+                console.log(`║      🌴 SawitDB Server - Version 2.6.0           ║`);
                 console.log(`╚══════════════════════════════════════════════════╝`);
             }
             console.log(`${prefix} Listening on ${this.host}:${this.port}`);
@@ -149,19 +98,11 @@ class SawitServer {
 
         // Close all client connections
         for (const client of this.clients) {
-            client.end(); // Graceful shutdown
+            client.end();
         }
 
-        // Close all open databases to release file locks
-        for (const [name, db] of this.databases) {
-            try {
-                console.log(`[Server] Closing database: ${name}`);
-                db.close();
-            } catch (e) {
-                console.error(`[Server] Error closing database ${name}:`, e.message);
-            }
-        }
-        this.databases.clear();
+        // Close all open databases
+        this.dbRegistry.closeAll();
 
         // Close server
         if (this.server) {
@@ -171,47 +112,40 @@ class SawitServer {
         }
     }
 
-    #handleConnection(socket) {
+    handleConnection(socket) {
         const clientId = `${socket.remoteAddress}:${socket.remotePort}`;
 
-        // Check connection limit
         if (this.clients.size >= this.maxConnections) {
-            this.#log('warn', `Connection limit reached. Rejecting ${clientId}`);
-            socket.write(
-                JSON.stringify({
-                    type: 'error',
-                    error: 'Server connection limit reached. Please try again later.'
-                }) + '\n'
-            );
+            this.log('warn', `Connection limit reached. Rejecting ${clientId}`);
+            socket.write(JSON.stringify({
+                type: 'error',
+                error: 'Server connection limit reached. Please try again later.'
+            }) + '\n');
             socket.end();
             return;
         }
 
-        this.#log('info', `Client connected: ${clientId}`);
+        this.log('info', `Client connected: ${clientId}`);
         this.stats.totalConnections++;
         this.stats.activeConnections++;
-
         this.clients.add(socket);
-        socket.clientId = clientId;
-        socket.connectedAt = Date.now();
 
-        let authenticated = !this.auth; // If no auth required, auto-authenticate
-        let currentDatabase = null;
+        // Attach session to socket for cleanup if needed, but best to keep separate
+        // Just use local var for session, pass to router
+        const session = new ClientSession(socket, clientId);
+
         let buffer = '';
 
         socket.on('data', (data) => {
             buffer += data.toString();
 
-            // Prevent buffer overflow attacks
-            if (buffer.length > 1048576) {
-                // 1MB limit
-                this.#log('warn', `Buffer overflow attempt from ${clientId}`);
-                this.#sendError(socket, 'Request too large');
+            if (buffer.length > 1048576) { // 1MB limit
+                this.log('warn', `Buffer overflow attempt from ${clientId}`);
+                this.sendError(socket, 'Request too large');
                 socket.destroy();
                 return;
             }
 
-            // Process complete messages (delimited by newline)
             let newlineIndex;
             while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
                 const message = buffer.substring(0, newlineIndex);
@@ -219,57 +153,39 @@ class SawitServer {
 
                 try {
                     const request = JSON.parse(message);
-                    this.#log('debug', `Request from ${clientId}`, request);
+                    this.log('debug', `Request from ${clientId}`, request);
 
-                    // Handle with timeout
-                    this.#handleRequest(socket, request, {
-                        authenticated,
-                        currentDatabase,
-                        setAuth: (val) => {
-                            authenticated = val;
-                        },
-                        setDatabase: (db) => {
-                            currentDatabase = db;
-                        }
-                    });
+                    this.router.handle(socket, request, session);
                 } catch (err) {
-                    this.#log(
-                        'error',
-                        `Invalid request from ${clientId}: ${err.message}`
-                    );
+                    this.log('error', `Invalid request from ${clientId}: ${err.message}`);
                     this.stats.errors++;
-                    this.#sendError(socket, `Invalid request format: ${err.message}`);
+                    this.sendError(socket, `Invalid request format: ${err.message}`);
                 }
             }
         });
 
         socket.on('end', () => {
-            const duration = Date.now() - (socket.connectedAt || Date.now());
-            this.#log(
-                'info',
-                `Client disconnected: ${clientId} (duration: ${duration}ms)`
-            );
+            const duration = Date.now() - session.connectedAt;
+            this.log('info', `Client disconnected: ${clientId} (duration: ${duration}ms)`);
             this.clients.delete(socket);
             this.stats.activeConnections--;
         });
 
         socket.on('error', (err) => {
-            this.#log('error', `Client error: ${clientId} - ${err.message}`);
+            this.log('error', `Client error: ${clientId} - ${err.message}`);
             this.clients.delete(socket);
             this.stats.activeConnections--;
             this.stats.errors++;
         });
 
         socket.on('timeout', () => {
-            this.#log('warn', `Client timeout: ${clientId}`);
+            this.log('warn', `Client timeout: ${clientId}`);
             socket.destroy();
         });
 
-        // Set socket timeout
         socket.setTimeout(this.queryTimeout);
 
-        // Send welcome message
-        this.#sendResponse(socket, {
+        this.sendResponse(socket, {
             type: 'welcome',
             message: 'SawitDB Server',
             version: '2.6.0',
@@ -277,66 +193,22 @@ class SawitServer {
         });
     }
 
-    #handleRequest(socket, request, context) {
-        const { type, payload } = request;
-
-        // Authentication check
-        if (this.auth && !context.authenticated && type !== 'auth') {
-            return this.#sendError(socket, 'Authentication required');
-        }
-
-        switch (type) {
-            case 'auth':
-                this.#handleAuth(socket, payload, context);
-                break;
-
-            case 'use':
-                this.#handleUseDatabase(socket, payload, context);
-                break;
-
-            case 'query':
-                this.#handleQuery(socket, payload, context);
-                break;
-
-            case 'ping':
-                this.#sendResponse(socket, { type: 'pong', timestamp: Date.now() });
-                break;
-
-            case 'list_databases':
-                this.#handleListDatabasess(socket);
-                break;
-
-            case 'drop_database':
-                this.#handleDropDatabase(socket, payload, context);
-                break;
-
-            case 'stats':
-                this.#handleStats(socket);
-                break;
-
-            default:
-                this.#sendError(socket, `Unknown request type: ${type}`);
+    sendResponse(socket, data) {
+        try {
+            if (socket.writable) {
+                socket.write(JSON.stringify(data) + '\n');
+            }
+        } catch (err) {
+            console.error('[Server] Failed to send response:', err.message);
         }
     }
 
-    #handleStats(socket) {
-        const uptime = Date.now() - this.stats.startTime;
-        const stats = {
-            ...this.stats,
-            uptime,
-            uptimeFormatted: this.#formatUptime(uptime),
-            databases: this.databases.size,
-            memoryUsage: process.memoryUsage(),
-            workers: this.threadPool ? this.threadPool.getStats() : null,
-        };
-
-        this.#sendResponse(socket, {
-            type: 'stats',
-            stats
-        });
+    sendError(socket, message) {
+        this.sendResponse(socket, { type: 'error', error: message });
     }
 
-    #formatUptime(ms) {
+    // Utiliy for Stats
+    formatUptime(ms) {
         const seconds = Math.floor(ms / 1000);
         const minutes = Math.floor(seconds / 60);
         const hours = Math.floor(minutes / 60);
@@ -346,386 +218,6 @@ class SawitServer {
         if (hours > 0) return `${hours}h ${minutes % 60}m`;
         if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
         return `${seconds}s`;
-    }
-
-    #handleAuth(socket, payload, context) {
-        const { username, password } = payload;
-
-        if (!this.auth) {
-            context.setAuth(true);
-            return this.#sendResponse(socket, {
-                type: 'auth_success',
-                message: 'No authentication required'
-            });
-        }
-
-        // Check if user exists and verify password with timing-safe comparison
-        const storedPassword = this.auth[username];
-        if (storedPassword && this.#verifyPassword(password, storedPassword)) {
-            context.setAuth(true);
-            this.#sendResponse(socket, {
-                type: 'auth_success',
-                message: 'Authentication successful'
-            });
-        } else {
-            this.#sendError(socket, 'Invalid credentials');
-        }
-    }
-
-    #handleUseDatabase(socket, payload, context) {
-        const { database } = payload;
-
-        if (!database || typeof database !== 'string') {
-            return this.#sendError(socket, 'Invalid database name');
-        }
-
-        // Validate database name (alphanumeric, underscore, dash)
-        if (!/^[a-zA-Z0-9_-]+$/.test(database)) {
-            return this.#sendError(
-                socket,
-                'Database name can only contain letters, numbers, underscore, and dash'
-            );
-        }
-
-        try {
-            const db = this.#getOrCreateDatabase(database);
-            context.setDatabase(database);
-            this.#sendResponse(socket, {
-                type: 'use_success',
-                database,
-                message: `Switched to database '${database}'`
-            });
-        } catch (err) {
-            this.#sendError(socket, `Failed to use database: ${err.message}`);
-        }
-    }
-
-    async #handleQuery(socket, payload, context) {
-        const { query, params } = payload;
-        const startTime = Date.now();
-
-        // --- Intercept Server-Level Commands (Wilayah Management) ---
-
-        const qUpper = query.trim().toUpperCase();
-
-        // 1. LIHAT WILAYAH
-        if (qUpper === 'LIHAT WILAYAH') {
-            try {
-                const databases = fs
-                    .readdirSync(this.dataDir)
-                    .filter((file) => file.endsWith('.sawit'));
-
-                // Format nicely as a table-like string or JSON
-                const list = databases
-                    .map((f) => `- ${f.replace('.sawit', '')}`)
-                    .join('\n');
-                const result = `Daftar Wilayah:\n${list}`;
-
-                return this.#sendResponse(socket, {
-                    type: 'query_result',
-                    result,
-                    query,
-                    executionTime: Date.now() - startTime
-                });
-            } catch (err) {
-                return this.#sendError(socket, `Gagal melihat wilayah: ${err.message}`);
-            }
-        }
-
-        // 2. BUKA WILAYAH [nama]
-        if (qUpper.startsWith('BUKA WILAYAH')) {
-            const parts = query.trim().split(/\s+/);
-            if (parts.length < 3) {
-                return this.#sendError(socket, 'Syntax: BUKA WILAYAH [nama_wilayah]');
-            }
-            const dbName = parts[2];
-            // Reuse logic from internal handler if possible, otherwise implement here
-            // Implementing directly to match the "create empty sawit file" logic
-            try {
-                // Validation
-                if (!/^[a-zA-Z0-9_-]+$/.test(dbName)) {
-                    return this.#sendError(
-                        socket,
-                        'Nama wilayah hanya boleh huruf, angka, _ dan -'
-                    );
-                }
-
-                const dbPath = path.join(this.dataDir, `${dbName}.sawit`);
-                if (fs.existsSync(dbPath)) {
-                    // It's technically fine if it exists, just say it's opened/available
-                    // But strict "Create" usually expects new. Let's follow "Open/Create" semantics of key-value stores or similar
-                    // Design doc says: "Membuat file ... kosong".
-                    // If exists, let's just say it exists.
-                    return this.#sendResponse(socket, {
-                        type: 'query_result',
-                        result: `Wilayah '${dbName}' sudah ada.`,
-                        query,
-                        executionTime: Date.now() - startTime
-                    });
-                }
-
-                // Create empty file (via SawitDB constructor which initializes it)
-                new SawitDB(dbPath);
-
-                return this.#sendResponse(socket, {
-                    type: 'query_result',
-                    result: `Wilayah '${dbName}' berhasil dibuka.`,
-                    query,
-                    executionTime: Date.now() - startTime
-                });
-            } catch (err) {
-                return this.#sendError(socket, `Gagal membuka wilayah: ${err.message}`);
-            }
-        }
-
-        // 3. MASUK WILAYAH [nama]
-        if (qUpper.startsWith('MASUK WILAYAH')) {
-            const parts = query.trim().split(/\s+/);
-            if (parts.length < 3) {
-                return this.#sendError(socket, 'Syntax: MASUK WILAYAH [nama_wilayah]');
-            }
-            const dbName = parts[2];
-
-            // Allow "MASUK WILAYAH DEFAULT" case-insensitive match for file? No, usually case sensitive filesystems.
-            // But let's assume case-sensitive for ID.
-
-            const dbPath = path.join(this.dataDir, `${dbName}.sawit`);
-            if (!fs.existsSync(dbPath)) {
-                return this.#sendError(socket, `Wilayah '${dbName}' tidak ditemukan.`);
-            }
-
-            context.setDatabase(dbName);
-            return this.#sendResponse(socket, {
-                type: 'query_result', // Return as query result so CLI prints it normally
-                result: `Selamat datang di wilayah '${dbName}'.`,
-                query,
-                executionTime: Date.now() - startTime
-            });
-        }
-
-        // 4. BAKAR WILAYAH [nama]
-        if (qUpper.startsWith('BAKAR WILAYAH')) {
-            const parts = query.trim().split(/\s+/);
-            if (parts.length < 3) {
-                return this.#sendError(socket, 'Syntax: BAKAR WILAYAH [nama_wilayah]');
-            }
-            const dbName = parts[2];
-
-            try {
-                const dbPath = path.join(this.dataDir, `${dbName}.sawit`);
-                if (!fs.existsSync(dbPath)) {
-                    return this.#sendError(
-                        socket,
-                        `Wilayah '${dbName}' tidak ditemukan.`
-                    );
-                }
-
-                // FIX: Close database before deletion to release file lock
-                if (this.databases.has(dbName)) {
-                    const db = this.databases.get(dbName);
-                    try {
-                        db.close();
-                    } catch (e) { }
-                    this.databases.delete(dbName);
-                }
-
-                // If current user is in this db, kick them out
-                if (context.currentDatabase === dbName) {
-                    context.setDatabase(null);
-                }
-
-                try {
-                    fs.unlinkSync(dbPath);
-                } catch (e) {
-                    // Retry once after short delay if locked? Or just throw.
-                    // If close() works, this should succeed.
-                    throw e;
-                }
-
-                return this.#sendResponse(socket, {
-                    type: 'query_result',
-                    result: `Wilayah '${dbName}' telah hangus terbakar.`,
-                    query,
-                    executionTime: Date.now() - startTime
-                });
-            } catch (err) {
-                return this.#sendError(
-                    socket,
-                    `Gagal membakar wilayah: ${err.message}`
-                );
-            }
-        }
-
-        // --- Generic Syntax Aliases (Server Level) ---
-
-        // 5. CREATE DATABASE [name] -> BUKA WILAYAH
-        if (qUpper.startsWith('CREATE DATABASE')) {
-            const parts = query.trim().split(/\s+/);
-            if (parts.length < 3)
-                return this.#sendError(socket, 'Syntax: CREATE DATABASE [name]');
-            // Recruit BUKA WILAYAH logic
-            const newQuery = `BUKA WILAYAH ${parts[2]}`;
-            return this.#handleQuery(
-                socket,
-                { ...payload, query: newQuery },
-                context
-            );
-        }
-
-        // 6. USE [name] -> MASUK WILAYAH
-        if (qUpper.startsWith('USE ')) {
-            const parts = query.trim().split(/\s+/);
-            if (parts.length < 2)
-                return this.#sendError(socket, 'Syntax: USE [name]');
-            // Recruit MASUK WILAYAH logic
-            const newQuery = `MASUK WILAYAH ${parts[1]}`;
-            return this.#handleQuery(
-                socket,
-                { ...payload, query: newQuery },
-                context
-            );
-        }
-
-        // 7. SHOW DATABASES -> LIHAT WILAYAH
-        if (qUpper === 'SHOW DATABASES') {
-            const newQuery = `LIHAT WILAYAH`;
-            return this.#handleQuery(
-                socket,
-                { ...payload, query: newQuery },
-                context
-            );
-        }
-
-        // 8. DROP DATABASE [name] -> BAKAR WILAYAH
-        if (qUpper.startsWith('DROP DATABASE')) {
-            const parts = query.trim().split(/\s+/);
-            if (parts.length < 3)
-                return this.#sendError(socket, 'Syntax: DROP DATABASE [name]');
-            // Recruit BAKAR WILAYAH logic
-            const newQuery = `BAKAR WILAYAH ${parts[2]}`;
-            return this.#handleQuery(
-                socket,
-                { ...payload, query: newQuery },
-                context
-            );
-        }
-
-        // --- End Intercept ---
-
-        if (!context.currentDatabase) {
-            return this.#sendError(
-                socket,
-                'Anda belum masuk wilayah manapun. Gunakan: MASUK WILAYAH [nama]'
-            );
-        }
-
-        try {
-            let result;
-            if (this.threadPool) {
-                // Offload to Worker Thread
-                const dbPath = path.join(this.dataDir, `${context.currentDatabase}.sawit`);
-                result = await this.threadPool.execute(dbPath, query, this.walConfig);
-            } else {
-                // Local Execution
-                const db = this.#getOrCreateDatabase(context.currentDatabase);
-                result = await Promise.resolve(db.query(query, params));
-            }
-
-            const duration = Date.now() - startTime;
-            this.stats.totalQueries++;
-
-            this.#log(
-                'debug',
-                `Query executed in ${duration}ms: ${query.substring(0, 50)}...`
-            );
-
-            this.#sendResponse(socket, {
-                type: 'query_result',
-                result,
-                query,
-                executionTime: duration
-            });
-        } catch (err) {
-            this.#log('error', `Query failed: ${err.message} - Query: ${query}`);
-            this.stats.errors++;
-            this.#sendError(socket, `Query error: ${err.message}`);
-        }
-    }
-
-    #handleListDatabasess(socket) {
-        try {
-            const databases = fs
-                .readdirSync(this.dataDir)
-                .filter((file) => file.endsWith('.sawit'))
-                .map((file) => file.replace('.sawit', ''));
-
-            this.#sendResponse(socket, {
-                type: 'database_list',
-                databases,
-                count: databases.length
-            });
-        } catch (err) {
-            this.#sendError(socket, `Failed to list databases: ${err.message}`);
-        }
-    }
-
-    #handleDropDatabase(socket, payload, context) {
-        const { database } = payload;
-
-        if (!database) {
-            return this.#sendError(socket, 'Database name required');
-        }
-
-        try {
-            const dbPath = path.join(this.dataDir, `${database}.sawit`);
-
-            if (!fs.existsSync(dbPath)) {
-                return this.#sendError(socket, `Database '${database}' does not exist`);
-            }
-
-            // Close database if open
-            if (this.databases.has(database)) {
-                this.databases.get(database).close(); // Fix: Close first
-                this.databases.delete(database);
-            }
-
-            // Delete file
-            fs.unlinkSync(dbPath);
-
-            // Clear current database if it was dropped
-            if (context.currentDatabase === database) {
-                context.setDatabase(null);
-            }
-
-            this.#sendResponse(socket, {
-                type: 'drop_success',
-                database,
-                message: `Database '${database}' has been burned (dropped)`
-            });
-        } catch (err) {
-            this.#sendError(socket, `Failed to drop database: ${err.message}`);
-        }
-    }
-
-    #getOrCreateDatabase(name) {
-        if (!this.databases.has(name)) {
-            const dbPath = path.join(this.dataDir, `${name}.sawit`);
-            const db = new SawitDB(dbPath, { wal: this.walConfig });
-            this.databases.set(name, db);
-        }
-        return this.databases.get(name);
-    }
-
-    #sendResponse(socket, data) {
-        try {
-            socket.write(JSON.stringify(data) + '\n');
-        } catch (err) {
-            console.error('[Server] Failed to send response:', err.message);
-        }
-    }
-
-    #sendError(socket, message) {
-        this.#sendResponse(socket, { type: 'error', error: message });
     }
 }
 
