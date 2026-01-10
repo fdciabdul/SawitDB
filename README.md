@@ -61,6 +61,7 @@ SawitDB is built with the spirit of "Data Sovereignty". We believe a reliable da
 - `bin/sawit-server.js`: Server executable.
 - `cli/`: Command Line Interface tools (local, remote, test, bench).
 - [CHANGELOG.md](CHANGELOG.md): Version history.
+- [docs/DB Event](docs/DB Event.md): Database Event Documentation.
 
 ## Installation
 
