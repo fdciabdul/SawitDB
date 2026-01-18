@@ -8,6 +8,8 @@ const DBEvent = require("./services/event/DBEvent");
 const TableManager = require('./services/TableManager');
 const IndexManager = require('./services/IndexManager');
 const ConditionEvaluator = require('./services/logic/ConditionEvaluator');
+const TransactionManager = require('./services/TransactionManager');
+const ViewManager = require('./services/ViewManager');
 
 // Executors
 const SelectExecutor = require('./services/executors/SelectExecutor');
@@ -50,6 +52,8 @@ class SawitDB {
         this.tableManager = new TableManager(this);
         this.indexManager = new IndexManager(this);
         this.conditionEvaluator = new ConditionEvaluator();
+        this.transactionManager = new TransactionManager(this);
+        this.viewManager = new ViewManager(this);
 
         // Initialize Executors
         this.selectExecutor = new SelectExecutor(this);
@@ -74,6 +78,9 @@ class SawitDB {
 
         // Load Indexes
         this.indexManager.loadIndexes();
+
+        // Load Views
+        this.viewManager.loadViews();
     }
 
     close() {
@@ -148,15 +155,28 @@ class SawitDB {
                     return this.indexManager.showIndexes(cmd.table);
 
                 case 'INSERT':
+                    if (this.transactionManager.isActive()) {
+                        return this.transactionManager.bufferOperation('INSERT', cmd);
+                    }
                     return this.insertExecutor.execute(cmd);
 
                 case 'SELECT':
+                    // Check if table is actually a view
+                    if (this.viewManager.isView(cmd.table)) {
+                        return this.viewManager.executeView(cmd.table, cmd.criteria);
+                    }
                     return this.selectExecutor.execute(cmd);
 
                 case 'DELETE':
+                    if (this.transactionManager.isActive()) {
+                        return this.transactionManager.bufferOperation('DELETE', cmd);
+                    }
                     return this.deleteExecutor.execute(cmd);
 
                 case 'UPDATE':
+                    if (this.transactionManager.isActive()) {
+                        return this.transactionManager.bufferOperation('UPDATE', cmd);
+                    }
                     return this.updateExecutor.execute(cmd);
 
                 case 'DROP_TABLE':
@@ -170,6 +190,21 @@ class SawitDB {
 
                 case 'EXPLAIN':
                     return this._explain(cmd.innerCommand);
+
+                case 'BEGIN_TRANSACTION':
+                    return this.transactionManager.begin();
+
+                case 'COMMIT':
+                    return this.transactionManager.commit();
+
+                case 'ROLLBACK':
+                    return this.transactionManager.rollback();
+
+                case 'CREATE_VIEW':
+                    return this.viewManager.createView(cmd.viewName, cmd.selectCommand);
+
+                case 'DROP_VIEW':
+                    return this.viewManager.dropView(cmd.viewName);
 
                 default:
                     return `Perintah tidak dikenal atau belum diimplementasikan di Engine Refactor.`;

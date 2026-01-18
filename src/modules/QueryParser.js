@@ -70,6 +70,26 @@ class QueryParser {
                 case 'JELASKAN':
                     command = this.parseExplain(tokens);
                     break;
+                case 'MULAI':
+                    command = this.parseBeginTransaction(tokens);
+                    break;
+                case 'BEGIN':
+                    command = { type: 'BEGIN_TRANSACTION' };
+                    break;
+                case 'SAHKAN':
+                case 'COMMIT':
+                    command = { type: 'COMMIT' };
+                    break;
+                case 'BATALKAN':
+                case 'ROLLBACK':
+                    command = { type: 'ROLLBACK' };
+                    break;
+                case 'PASANG':
+                    command = this.parseCreateView(tokens);
+                    break;
+                case 'BUANG':
+                    command = this.parseDropView(tokens);
+                    break;
                 default:
                     throw new Error(`Perintah tidak dikenal: ${cmd}`);
             }
@@ -791,6 +811,61 @@ class QueryParser {
         }
 
         return { type: 'EXPLAIN', innerCommand };
+    }
+
+    parseBeginTransaction(tokens) {
+        // MULAI AKAD | BEGIN TRANSACTION
+        if (tokens[0].toUpperCase() === 'MULAI') {
+            if (tokens[1] && tokens[1].toUpperCase() === 'AKAD') {
+                return { type: 'BEGIN_TRANSACTION' };
+            }
+            throw new Error("Syntax: MULAI AKAD");
+        }
+        return { type: 'BEGIN_TRANSACTION' };
+    }
+
+    parseCreateView(tokens) {
+        // PASANG TEROPONG [nama] SEBAGAI [SELECT query]
+        if (tokens[0].toUpperCase() !== 'PASANG') {
+            throw new Error("Syntax: PASANG TEROPONG [nama] SEBAGAI [query]");
+        }
+
+        if (tokens[1].toUpperCase() !== 'TEROPONG') {
+            throw new Error("Expected TEROPONG after PASANG");
+        }
+
+        const viewName = tokens[2];
+        if (!viewName) {
+            throw new Error("View name required");
+        }
+
+        if (tokens[3].toUpperCase() !== 'SEBAGAI') {
+            throw new Error("Expected SEBAGAI after view name");
+        }
+
+        // Parse the SELECT query (rest of tokens)
+        const selectTokens = tokens.slice(4);
+        const selectCommand = this.parseSelect(selectTokens);
+
+        return { type: 'CREATE_VIEW', viewName, selectCommand };
+    }
+
+    parseDropView(tokens) {
+        // BUANG TEROPONG [nama]
+        if (tokens[0].toUpperCase() !== 'BUANG') {
+            throw new Error("Syntax: BUANG TEROPONG [nama]");
+        }
+
+        if (tokens[1].toUpperCase() !== 'TEROPONG') {
+            throw new Error("Expected TEROPONG after BUANG");
+        }
+
+        const viewName = tokens[2];
+        if (!viewName) {
+            throw new Error("View name required");
+        }
+
+        return { type: 'DROP_VIEW', viewName };
     }
 }
 

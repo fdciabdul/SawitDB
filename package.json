@@ -3,8 +3,8 @@
   "publishConfig": {
     "access": "public"
   },
-  "version": "2.6.0",
-  "description": "A high-performance hybrid paged database with Agricultural Query Language (AQL) and Generic SQL support. Features single-file storage (.sawit), object caching, worker-thread parallelism, and crash recovery.",
+  "version": "3.0.0",
+  "description": "A high-performance hybrid paged database with Agricultural Query Language (AQL) and Generic SQL support. Features single-file storage (.sawit), object caching, worker-thread parallelism, crash recovery, ACID transactions (AKAD), and virtual views (TEROPONG).",
   "main": "src/WowoEngine.js",
   "scripts": {
     "start": "node bin/sawit-server.js",
