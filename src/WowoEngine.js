@@ -3,6 +3,7 @@ const QueryParser = require('./modules/QueryParser');
 const WAL = require('./modules/WAL');
 const DBEventHandler = require("./services/event/DBEventHandler");
 const DBEvent = require("./services/event/DBEvent");
+const path = require('path');
 
 // Services
 const TableManager = require('./services/TableManager');
@@ -29,6 +30,7 @@ const AggregateExecutor = require('./services/executors/AggregateExecutor');
  */
 class SawitDB {
     constructor(filePath, options = {}) {
+        this.dbPath = path.dirname(filePath);
         // WAL: Optional crash safety (backward compatible - disabled by default)
         this.wal = options.wal ? new WAL(filePath, options.wal) : null;
         this.dbevent = options.dbevent ? options.dbevent : new DBEventHandler();
