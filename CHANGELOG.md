@@ -1,6 +1,71 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to this project will be documented in file.
+
+## [v3.0.0] - 2026-01-18
+
+### 🎉 Major Features - AKAD & TEROPONG
+
+#### AKAD (Transactions) - ACID Compliance
+- **Transaction Support**: Full ACID-compliant transactions with in-memory buffering
+- **AQL Syntax**:
+    - `MULAI AKAD` - Begin transaction
+    - `SAHKAN` - Commit transaction
+    - `BATALKAN` - Rollback transaction
+- **Generic SQL Syntax**: `BEGIN TRANSACTION`, `COMMIT`, `ROLLBACK`
+- **Implementation**:
+    - New `TransactionManager.js` service for transaction state management
+    - Operations buffered in memory during active transaction
+    - Atomic commit: all operations succeed or all fail
+    - Isolation: uncommitted data not visible to SELECT queries
+- **Use Cases**:
+    - Multi-step data modifications
+    - Financial transactions
+    - Batch operations with rollback capability
+
+#### TEROPONG (Views) - Virtual Tables
+- **View Support**: Create virtual tables from stored SELECT queries
+- **AQL Syntax**:
+    - `PASANG TEROPONG [nama] SEBAGAI [query]` - Create view
+    - `BUANG TEROPONG [nama]` - Drop view
+    - `PANEN * DARI [view_name]` - Query view like a table
+- **Generic SQL Syntax**: `CREATE VIEW`, `DROP VIEW`
+- **Implementation**:
+    - New `ViewManager.js` service for view lifecycle
+    - Views stored in `_views` system table
+    - No data duplication - only query definition stored
+    - Automatic view resolution in SELECT executor
+- **Benefits**:
+    - Query abstraction and reusability
+    - Security through column-level access control
+    - Simplified complex queries
+
+### 🛠 Architecture Changes
+- **New Services**:
+    - `src/services/TransactionManager.js` - Transaction state and buffering
+    - `src/services/ViewManager.js` - View definition and execution
+- **Parser Enhancements**:
+    - Added `parseBeginTransaction()`, `parseCreateView()`, `parseDropView()`
+    - Extended command types: `BEGIN_TRANSACTION`, `COMMIT`, `ROLLBACK`, `CREATE_VIEW`, `DROP_VIEW`
+- **Engine Integration**:
+    - Transaction-aware INSERT/UPDATE/DELETE routing
+    - View resolution in SELECT queries
+    - System table initialization for `_views`
+
+### 📚 Documentation
+- **NEW**: `docs/NEW_FEATURES.md` - Comprehensive guide for AKAD and TEROPONG
+- **Updated**: `README.md` - Added v3.0 features to feature list and syntax table
+- **Tests**: `tests/test_new_features.js` - Full test suite for transactions and views
+
+### 🎯 Roadmap Preview
+Next features in development:
+- **KENTONGAN (Triggers)** - Event-driven automation
+- **SOP (Stored Procedures)** - Reusable logic blocks
+- **BLUSUKAN (Full-Text Search)** - Advanced text search
+- **CABANG (Replication)** - High availability
+- **POS RONDA (Security)** - User permissions
+
+---
 
 ## [v2.6.0] - 2026-01-10
 

@@ -39,6 +39,8 @@ Please support our brothers and sisters in Aceh.
 - **True Multi-Threading (NEW)**: Worker Pool architecture separates IO (Main Thread) from CPU (Worker Threads).
 - **Advanced SQL (NEW)**: Support for `JOIN` (Left/Right/Full/Cross), `JAVING`, `DISTINCT`, and more.
 - **NPM Support (NEW)**: Install via `npm install @wowoengine/sawitdb`.
+- **AKAD Transactions (v3.0)**: ACID-compliant transactions with `MULAI AKAD`, `SAHKAN`, `BATALKAN`.
+- **TEROPONG Views (v3.0)**: Virtual tables with `PASANG TEROPONG` and `BUANG TEROPONG`.
 
 ## Filosofi
 
@@ -106,6 +108,11 @@ SawitDB introduces the **Generic Syntax** alongside the classic **Agricultural Q
 | **Delete** | `GUSUR DARI products DIMANA ...` | `DELETE FROM products WHERE ...` |
 | **Indexing** | `INDEKS products PADA price` | `CREATE INDEX ON products (price)` |
 | **Aggregation** | `HITUNG SUM(stock) DARI products` | *Same Syntax* |
+| **Begin Transaction** | `MULAI AKAD` | `BEGIN TRANSACTION` |
+| **Commit** | `SAHKAN` | `COMMIT` |
+| **Rollback** | `BATALKAN` | `ROLLBACK` |
+| **Create View** | `PASANG TEROPONG [nama] SEBAGAI [query]` | `CREATE VIEW [nama] AS [query]` |
+| **Drop View** | `BUANG TEROPONG [nama]` | `DROP VIEW [nama]` |
 
 ---
 
